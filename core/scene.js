@@ -1,0 +1,315 @@
+// core/scene.js — Scene + Item primitives, SDF combinators, and transforms.
+//
+// A Scene is a flat array of Items. Each Item has a color, a world-space
+// position, and an SDF (signed distance function) that takes a LOCAL-space
+// point (already translated by the tracer) and returns the signed distance to
+// the item's surface.
+//
+// SDFs take three raw numbers rather than a Vec3 to avoid per-call allocation
+// in the tracer's hot loop. Compose primitives with combinators
+// (union/subtract/smoothUnionSDF/invert) and transforms (translate/rotateY) to
+// build arbitrary shapes; the result is just another SDF.
+
+/** @typedef {import('./r3.js').Vec3} Vec3 */
+/** @typedef {(px: number, py: number, pz: number) => number} SDF */
+
+/**
+ * @typedef {string | number} RegionKey
+ */
+
+/**
+ * @typedef {{
+ *   name?: string,
+ *   color: Vec3,            // [r, g, b] in 0-255 — fallback / used when colorFn absent
+ *   colorFn?: (lpx: number, lpy: number, lpz: number) => Vec3,
+ *                           // optional spatial color in local space; called at hit
+ *                           // (not per-step), so cost is amortized. Lets one Item
+ *                           // carry patterns (planks, chessboard, painted-on details)
+ *                           // without inflating scene size.
+ *   position: Vec3,         // world-space center of the item's local frame
+ *   sdf: SDF,               // signed distance in the item's local frame
+ *   invisible?: boolean,    // skip in tracer (still considered by physics)
+ *   opacity?: number,       // surface alpha 0..1; default 1 (opaque). Translucent
+ *                           // items contribute color and let rays continue past.
+ *   collides?: boolean,     // whether physics treats as solid (default true).
+ *                           // Set false for items the fish should swim through.
+ *   boundingRadius?: number, // if set, the tracer's per-ray bounding-sphere
+ *                           // filter drops the item from a ray's candidate
+ *                           // list when the ray's bounding sphere doesn't
+ *                           // intersect this radius around `position`. Items
+ *                           // WITHOUT this field are never filtered (use for
+ *                           // large/infinite items — room, floor and ceiling
+ *                           // planes).
+ *   regionKey?: RegionKey,  // if set together with `Scene.regionFn`, the
+ *                           // tracer's per-step region filter only considers
+ *                           // this item when the current ray-step point's
+ *                           // region matches. Items WITHOUT a regionKey are
+ *                           // always considered (use for items that span
+ *                           // region boundaries — outer walls, floor and
+ *                           // ceiling planes, the bowl glass).
+ * }} Item
+ */
+
+/**
+ * Scenes are arrays of Items. They may optionally carry a `regionFn`
+ * property: a function mapping a world-space point to a region key. When
+ * present, the tracer skips items whose `regionKey` doesn't match the
+ * current ray-step point's region. If `regionFn` is absent, no region
+ * filtering happens and `regionKey` on items is ignored.
+ *
+ * @typedef {Item[] & { regionFn?: (px: number, py: number, pz: number) => (RegionKey | null) }} Scene
+ */
+
+/** @returns {Scene} */
+export const createScene = () => [];
+
+/**
+ * @param {Scene} scene
+ * @param {Item} item
+ * @returns {number} the item's index in the scene
+ */
+export const registerItem = (scene, item) => {
+  scene.push(item);
+  return scene.length - 1;
+};
+
+
+
+// ────────────────────────────── primitives ──────────────────────────────
+
+/** Sphere of given radius, centered at the local origin. */
+/** @type {(radius: number) => SDF} */
+export const sphereSDF = (radius) => (px, py, pz) =>
+  Math.sqrt(px * px + py * py + pz * pz) - radius;
+
+/** Axis-aligned box centered at the local origin; takes half-extents. */
+/** @type {(halfExtents: Vec3) => SDF} */
+export const boxSDF = ([hx, hy, hz]) => (px, py, pz) => {
+  const dx = Math.abs(px) - hx;
+  const dy = Math.abs(py) - hy;
+  const dz = Math.abs(pz) - hz;
+  const ox = Math.max(dx, 0);
+  const oy = Math.max(dy, 0);
+  const oz = Math.max(dz, 0);
+  const outside = Math.sqrt(ox * ox + oy * oy + oz * oz);
+  const inside  = Math.min(Math.max(dx, Math.max(dy, dz)), 0);
+  return outside + inside;
+};
+
+/**
+ * Infinite plane through the local origin with the given (assumed unit)
+ * normal. `offset` shifts the plane along the normal by that distance.
+ * Positive SDF on the side the normal points toward.
+ */
+/** @type {(normal: Vec3, offset?: number) => SDF} */
+export const planeSDF = ([nx, ny, nz], offset = 0) => (px, py, pz) =>
+  px * nx + py * ny + pz * nz - offset;
+
+/**
+ * Capsule of given radius along a line segment centered at the local origin
+ * along the Y axis, extending from -halfHeight to +halfHeight.
+ */
+/** @type {(halfHeight: number, radius: number) => SDF} */
+export const capsuleSDF = (halfHeight, radius) => (px, py, pz) => {
+  const cy = Math.max(-halfHeight, Math.min(halfHeight, py));
+  const dy = py - cy;
+  return Math.sqrt(px * px + dy * dy + pz * pz) - radius;
+};
+
+/**
+ * Capsule between two arbitrary 3D points with the given radius — a smooth
+ * tube with hemispherical caps. Cleaner than chains of sphere SDFs for limbs
+ * and connectors; no bulging at segment-center points.
+ */
+/** @type {(a: Vec3, b: Vec3, radius: number) => SDF} */
+export const capsuleBetweenSDF = ([ax, ay, az], [bx, by, bz], radius) => {
+  const dx = bx - ax, dy = by - ay, dz = bz - az;
+  const lenSq = dx * dx + dy * dy + dz * dz;
+  return (px, py, pz) => {
+    const lpx = px - ax, lpy = py - ay, lpz = pz - az;
+    let t = (lpx * dx + lpy * dy + lpz * dz) / lenSq;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const cpx = lpx - dx * t, cpy = lpy - dy * t, cpz = lpz - dz * t;
+    return Math.sqrt(cpx * cpx + cpy * cpy + cpz * cpz) - radius;
+  };
+};
+
+/**
+ * Cylinder centered at the local origin along the Y axis, total height
+ * 2*halfHeight, with the given radius.
+ */
+/** @type {(halfHeight: number, radius: number) => SDF} */
+export const cylinderSDF = (halfHeight, radius) => (px, py, pz) => {
+  const dr = Math.sqrt(px * px + pz * pz) - radius;
+  const dy = Math.abs(py) - halfHeight;
+  const ox = Math.max(dr, 0);
+  const oy = Math.max(dy, 0);
+  return Math.min(Math.max(dr, dy), 0) + Math.sqrt(ox * ox + oy * oy);
+};
+
+/**
+ * Inside-of-sphere SDF: positive inside, negative outside; gradient points
+ * inward toward the local origin. Used as a closed bowl/arena boundary — a
+ * fish inside gets pushed back toward center on collision.
+ */
+/** @type {(radius: number) => SDF} */
+export const fishbowlSDF = (radius) => (px, py, pz) =>
+  radius - Math.sqrt(px * px + py * py + pz * pz);
+
+/**
+ * Bowl with the top open: thin spherical shell wall (between innerR and
+ * outerR) that exists only below Y = rimY. Above the rim, no wall — air
+ * continues upward, so a camera inside the bowl can look up through the
+ * open top into whatever else is in the scene above.
+ *
+ * Returns a regular SDF (negative inside the wall material, positive in
+ * air). For a fish inside the bowl: marching outward, the SDF approaches
+ * zero at the inner wall surface (r = innerR), becomes negative inside the
+ * shell, and goes positive again outside (r > outerR). Going up past the
+ * rim, the (py - rimY) term keeps the SDF positive — no wall hit.
+ */
+/** @type {(opts: { outerR: number, innerR: number, rimY: number }) => SDF} */
+export const openTopBowlSDF = ({ outerR, innerR, rimY }) => (px, py, pz) => {
+  const r = Math.sqrt(px * px + py * py + pz * pz);
+  return Math.max(innerR - r, r - outerR, py - rimY);
+};
+
+
+// ───────────────────────── boolean combinators ──────────────────────────
+
+/** Sharp union (visual: A ∪ B). */
+/** @type {(...sdfs: SDF[]) => SDF} */
+export const unionSDF = (...sdfs) => (px, py, pz) => {
+  let d = Infinity;
+  for (let i = 0; i < sdfs.length; i++) {
+    const di = sdfs[i](px, py, pz);
+    if (di < d) d = di;
+  }
+  return d;
+};
+
+/** Intersection (visual: A ∩ B). */
+/** @type {(...sdfs: SDF[]) => SDF} */
+export const intersectionSDF = (...sdfs) => (px, py, pz) => {
+  let d = -Infinity;
+  for (let i = 0; i < sdfs.length; i++) {
+    const di = sdfs[i](px, py, pz);
+    if (di > d) d = di;
+  }
+  return d;
+};
+
+/**
+ * Cut `remove` out of `from`. Result = from \ remove.
+ *
+ * Pitfall: when the carve is supposed to open onto a face of `from` (e.g.,
+ * a slot punched through the front of a box), make `remove` extend past
+ * `from` in those dimensions. Two failure modes if you don't:
+ *
+ *   1. RENDERING: with no overlap (boundaries exactly coincident), both
+ *      `from` and `remove` report SDF = 0 along the shared face, cutSDF
+ *      returns 0, and the marcher reads it as a hit — the hole's edge
+ *      renders as a thin solid skin instead of an open opening.
+ *
+ *   2. COLLISION: with a small overlap, the SDF dips in the overlap region
+ *      just outside `from`'s face (min depth ≈ overlap / 2). If a
+ *      collision-radius-`r` mover tries to traverse the opening, it'll be
+ *      pushed back when the dip falls below `r`. Use overlap > 2r.
+ *
+ * Rendering-only carves (no traversal) can use as little as 0.1.
+ */
+/** @type {(remove: SDF, from: SDF) => SDF} */
+export const cutSDF = (remove, from) => (px, py, pz) =>
+  Math.max(-remove(px, py, pz), from(px, py, pz));
+
+/**
+ * Smooth union — like unionSDF but with rounded blending where surfaces meet.
+ * `k` is the smoothing radius in world units; small k ≈ sharp, larger k
+ * (try 0.1–0.5) gives blob-like rounded transitions. Used for organic shapes
+ * (rocks: jittered spheres; fish bodies; plant clusters). Don't pass k = 0.
+ *
+ * Implementation: nested polynomial smooth-min from Inigo Quilez. Faster than
+ * the exponential variant — no exp/log in the hot loop.
+ */
+/** @type {(k: number, ...sdfs: SDF[]) => SDF} */
+export const smoothUnionSDF = (k, ...sdfs) => (px, py, pz) => {
+  let result = sdfs[0](px, py, pz);
+  for (let i = 1; i < sdfs.length; i++) {
+    const d = sdfs[i](px, py, pz);
+    const h = Math.max(k - Math.abs(d - result), 0) / k;
+    result = Math.min(result, d) - h * h * k * 0.25;
+  }
+  return result;
+};
+
+/**
+ * Generic SDF inverter — flips inside and outside. Used to make "interior"
+ * surfaces of any closed shape (e.g., a room from a box).
+ */
+/** @type {(sdf: SDF) => SDF} */
+export const invertSDF = (sdf) => (px, py, pz) => -sdf(px, py, pz);
+
+
+// ─────────────────────────────── transforms ──────────────────────────────
+
+/** Translate an SDF by [dx, dy, dz] in its parent frame. */
+/** @type {(offset: Vec3, sdf: SDF) => SDF} */
+export const translateSDF = ([dx, dy, dz], sdf) => (px, py, pz) =>
+  sdf(px - dx, py - dy, pz - dz);
+
+/**
+ * Rotate an SDF by `theta` radians around the Y axis. Uses the same
+ * +CCW-from-above convention as r3.rotY (so positive theta visually rotates
+ * the shape counterclockwise when viewed from above).
+ */
+/** @type {(theta: number, sdf: SDF) => SDF} */
+export const rotateYSDF = (theta, sdf) => {
+  const c = Math.cos(theta), s = Math.sin(theta);
+  return (px, py, pz) => sdf(px * c - pz * s, py, px * s + pz * c);
+};
+
+/**
+ * Rotate an SDF by `theta` radians around the X axis. Same +CCW-from-axis
+ * convention as r3.rotX (looking from +X toward origin: positive theta takes
+ * +Y toward +Z, equivalently +Z toward -Y). For "pitch nose up" of a shape
+ * built bow-forward along +Z, pass a negative theta.
+ */
+/** @type {(theta: number, sdf: SDF) => SDF} */
+export const rotateXSDF = (theta, sdf) => {
+  const c = Math.cos(theta), s = Math.sin(theta);
+  return (px, py, pz) => sdf(px, py * c + pz * s, -py * s + pz * c);
+};
+
+/**
+ * Rotate an SDF by `theta` radians around the Z axis. Same +CCW-from-axis
+ * convention as r3.rotZ (looking from +Z toward origin: positive theta takes
+ * +X toward +Y).
+ */
+/** @type {(theta: number, sdf: SDF) => SDF} */
+export const rotateZSDF = (theta, sdf) => {
+  const c = Math.cos(theta), s = Math.sin(theta);
+  return (px, py, pz) => sdf(px * c + py * s, -px * s + py * c, pz);
+};
+
+
+// ─────────────────────────── differential ops ───────────────────────────
+
+/**
+ * Forward finite-difference gradient of an SDF at a local-space point. Caller
+ * supplies the precomputed center distance so the helper does only 3 SDF
+ * evaluations instead of 4. Returns the unnormalized gradient vector — caller
+ * normalizes if needed.
+ *
+ * @param {SDF} sdf
+ * @param {number} lpx        item-local x
+ * @param {number} lpy        item-local y
+ * @param {number} lpz        item-local z
+ * @param {number} centerD    precomputed sdf(lpx, lpy, lpz)
+ * @param {number} eps        finite-difference step size
+ * @returns {Vec3}            [gx, gy, gz]
+ */
+export const sdfGrad = (sdf, lpx, lpy, lpz, centerD, eps) => [
+  sdf(lpx + eps, lpy, lpz) - centerD,
+  sdf(lpx, lpy + eps, lpz) - centerD,
+  sdf(lpx, lpy, lpz + eps) - centerD,
+];
