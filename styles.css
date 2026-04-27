@@ -1,0 +1,14 @@
+body {
+  background: #000;
+  margin: 4em auto;
+  touch-action: none;
+}
+#screen-wrap {
+  width: 700px;
+  max-width: 100%;
+  margin: 2em auto;
+  user-select: none;
+  cursor: grab;
+  position: relative;
+}
+#screen-wrap:active { cursor: grabbing; }

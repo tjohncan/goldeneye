@@ -1,0 +1,237 @@
+<svg
+  width="512"
+  height="512"
+  viewBox="0 0 512 512"
+  xmlns="http://www.w3.org/2000/svg">
+
+<!-- ||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||
+
+  G O L D E N E Y E — fisheye goldfish-in-a-bowl simulation
+
+  Cartoon scallop: 7 hotdog-pill blades fanning from a small umbo
+  tail at the bottom. Three rising bubbles drift up the canvas in
+  a zigzag — bottom-left, middle-right, top-leftish — and the
+  middle bubble carries a warm gold spark, the "goldeneye."
+
+||||||||||||||||||||||||||||||||||||||||||||||||||||||||||||| -->
+<!--
+
+  PNG and ICO asset pipeline:
+
+    # one-time install of image tools:
+    # sudo apt-get install librsvg2-bin optipng icoutils
+
+    cd favicon
+
+    rsvg-convert -w 16  -h 16  favicon.svg -o favicon-16x16.png
+    rsvg-convert -w 32  -h 32  favicon.svg -o favicon-32x32.png
+    rsvg-convert -w 48  -h 48  favicon.svg -o favicon-48x48.png
+    rsvg-convert -w 64  -h 64  favicon.svg -o favicon-64x64.png
+    rsvg-convert -w 180 -h 180 favicon.svg -o apple-touch-icon.png
+    rsvg-convert -w 192 -h 192 favicon.svg -o icon-192x192.png
+    rsvg-convert -w 512 -h 512 favicon.svg -o icon-512x512.png
+
+    optipng -o7 *.png
+
+    cd ..
+
+    icotool -c -o favicon.ico \
+      favicon/favicon-16x16.png \
+      favicon/favicon-32x32.png \
+      favicon/favicon-48x48.png
+
+-->
+
+  <defs>
+
+    <!-- Deep water — navy at edges, slight teal lift behind the shell. -->
+    <radialGradient id="water" cx="0.5" cy="0.55" r="0.72">
+      <stop offset="0%"   stop-color="#1a3548"/>
+      <stop offset="55%"  stop-color="#102438"/>
+      <stop offset="100%" stop-color="#0a1830"/>
+    </radialGradient>
+
+    <!-- Blade fill — top-lit, subtle shading toward the umbo end. -->
+    <linearGradient id="blade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#f0f6fa"/>
+      <stop offset="65%"  stop-color="#d8e8f0"/>
+      <stop offset="100%" stop-color="#a8c4d8"/>
+    </linearGradient>
+
+    <!-- Umbo — darker base so the blades read as emerging from it. -->
+    <linearGradient id="umbo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#7896b4"/>
+      <stop offset="100%" stop-color="#4868a0"/>
+    </linearGradient>
+
+    <!-- Bubble glass — pale cyan-white ring fill, transparent center. -->
+    <radialGradient id="bubbleGlass" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="70%"  stop-color="#d8f0fa" stop-opacity="0.05"/>
+      <stop offset="92%"  stop-color="#e8f4fc" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.85"/>
+    </radialGradient>
+
+    <!-- Gold spark — same family language as the other favicons:
+         hot core fading through warm amber to transparent. -->
+    <radialGradient id="goldSpark">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="10%"  stop-color="#fff0c8" stop-opacity="0.95"/>
+      <stop offset="28%"  stop-color="#f0c048" stop-opacity="0.65"/>
+      <stop offset="55%"  stop-color="#a87830" stop-opacity="0.30"/>
+      <stop offset="100%" stop-color="#604010" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Disc clip — favicon canvas. -->
+    <clipPath id="disc"><circle cx="256" cy="256" r="256"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#disc)">
+
+    <!-- ===========================================================
+         WATER BACKGROUND
+         =========================================================== -->
+    <rect width="512" height="512" fill="url(#water)"/>
+
+
+    <!-- ===========================================================
+         CARTOON SCALLOP — 7 HOTDOG BLADES
+         Each blade is a vertical capsule (rect 60×298, rx=30) that
+         is rotated around the umbo center (256,408). Spread is
+         108° total — angles -54, -36, -18, 0, +18, +36, +54.
+         Blade rect is sized so the bottom rounded cap is centered
+         exactly at the umbo (rect_y + h - rx = 140 + 298 - 30 =
+         408). Result: every blade's bottom cap is the same circle
+         around (256,408), so all 7 blade ends converge cleanly at
+         a single point — and the umbo shield, drawn on top, hides
+         the convergence completely.
+         Each blade is grouped with its OWN highlight stripe so the
+         fill and highlight share a single z-layer. Subsequent
+         (inner) blade groups cover BOTH the fill and highlight of
+         any outer blade they overlap — preventing the highlight of
+         one blade from leaking through another blade's body.
+         Stacking outer→inner: -54, +54, -36, +36, -18, +18, 0 —
+         center blade on top, blades falling back symmetrically.
+         =========================================================== -->
+    <g fill="url(#blade)" stroke="#0a1424" stroke-width="5"
+       stroke-linejoin="round">
+
+      <g transform="rotate(-54 256 408)">
+        <rect x="226" y="140" width="60" height="298" rx="30"/>
+        <line x1="234" y1="180" x2="234" y2="400"
+              stroke="#ffffff" stroke-width="2.5"
+              stroke-linecap="round" opacity="0.55"/>
+      </g>
+
+      <g transform="rotate(54 256 408)">
+        <rect x="226" y="140" width="60" height="298" rx="30"/>
+        <line x1="234" y1="180" x2="234" y2="400"
+              stroke="#ffffff" stroke-width="2.5"
+              stroke-linecap="round" opacity="0.55"/>
+      </g>
+
+      <g transform="rotate(-36 256 408)">
+        <rect x="226" y="140" width="60" height="298" rx="30"/>
+        <line x1="234" y1="180" x2="234" y2="400"
+              stroke="#ffffff" stroke-width="2.5"
+              stroke-linecap="round" opacity="0.55"/>
+      </g>
+
+      <g transform="rotate(36 256 408)">
+        <rect x="226" y="140" width="60" height="298" rx="30"/>
+        <line x1="234" y1="180" x2="234" y2="400"
+              stroke="#ffffff" stroke-width="2.5"
+              stroke-linecap="round" opacity="0.55"/>
+      </g>
+
+      <g transform="rotate(-18 256 408)">
+        <rect x="226" y="140" width="60" height="298" rx="30"/>
+        <line x1="234" y1="180" x2="234" y2="400"
+              stroke="#ffffff" stroke-width="2.5"
+              stroke-linecap="round" opacity="0.55"/>
+      </g>
+
+      <g transform="rotate(18 256 408)">
+        <rect x="226" y="140" width="60" height="298" rx="30"/>
+        <line x1="234" y1="180" x2="234" y2="400"
+              stroke="#ffffff" stroke-width="2.5"
+              stroke-linecap="round" opacity="0.55"/>
+      </g>
+
+      <g>
+        <rect x="226" y="140" width="60" height="298" rx="30"/>
+        <line x1="234" y1="180" x2="234" y2="400"
+              stroke="#ffffff" stroke-width="2.5"
+              stroke-linecap="round" opacity="0.55"/>
+      </g>
+
+    </g>
+
+
+    <!-- ===========================================================
+         UMBO SHIELD + TAIL
+         Shield-shaped cap that covers where all 7 blade bottoms
+         converge (a single circle of radius 30 around 256,408),
+         narrowing to a small rounded tail nub below.
+         Top arc reaches y=376; tail tip at y=442.
+         =========================================================== -->
+    <path d="M 220,408
+             Q 220,376 256,376
+             Q 292,376 292,408
+             Q 296,422 278,434
+             Q 256,442 234,434
+             Q 216,422 220,408
+             Z"
+          fill="url(#umbo)" stroke="#0a1424" stroke-width="5"
+          stroke-linejoin="round"/>
+
+
+    <!-- ===========================================================
+         RISING BUBBLES — zigzag offsets up the canvas
+         Bottom: small,    slightly LEFT  (cx=230, cy=346)
+         Middle: gold,     slightly RIGHT (cx=286, cy=246)
+         Top:    largest,  LEFT (less than bottom) (cx=240, cy=128)
+         All three are gold-rimmed with gold cores; the middle
+         bubble carries the big spark halo — the "goldeneye."
+         =========================================================== -->
+
+    <!-- Bottom bubble — small, gold-rimmed with a small gold core. -->
+    <g>
+      <circle cx="230" cy="346" r="22" fill="url(#bubbleGlass)"/>
+      <circle cx="230" cy="346" r="22" fill="none"
+              stroke="#f0e0b8" stroke-width="2" opacity="0.88"/>
+      <circle cx="230" cy="346" r="5" fill="#fff0c8"/>
+      <circle cx="230" cy="346" r="2" fill="#ffffff"/>
+      <path d="M 218,338 Q 214,346 220,354" fill="none"
+            stroke="#ffffff" stroke-width="2" stroke-linecap="round"
+            opacity="0.85"/>
+    </g>
+
+    <!-- Middle bubble — the goldeneye. Big spark halo + gold core. -->
+    <g>
+      <circle cx="286" cy="246" r="120" fill="url(#goldSpark)"/>
+      <circle cx="286" cy="246" r="34" fill="url(#bubbleGlass)"/>
+      <circle cx="286" cy="246" r="34" fill="none"
+              stroke="#f0e0b8" stroke-width="2.5" opacity="0.85"/>
+      <circle cx="286" cy="246" r="9" fill="#fff0c8"/>
+      <circle cx="286" cy="246" r="4" fill="#ffffff"/>
+      <path d="M 270,234 Q 264,248 272,260" fill="none"
+            stroke="#ffffff" stroke-width="2.5" stroke-linecap="round"
+            opacity="0.85"/>
+    </g>
+
+    <!-- Top bubble — largest, gold-rimmed with a gold core. -->
+    <g>
+      <circle cx="240" cy="128" r="44" fill="url(#bubbleGlass)"/>
+      <circle cx="240" cy="128" r="44" fill="none"
+              stroke="#f0e0b8" stroke-width="2.5" opacity="0.88"/>
+      <circle cx="240" cy="128" r="9" fill="#fff0c8"/>
+      <circle cx="240" cy="128" r="4" fill="#ffffff"/>
+      <path d="M 218,114 Q 208,130 218,148" fill="none"
+            stroke="#ffffff" stroke-width="3" stroke-linecap="round"
+            opacity="0.88"/>
+    </g>
+
+  </g>
+
+</svg>
