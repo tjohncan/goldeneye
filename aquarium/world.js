@@ -378,7 +378,7 @@ export const createWorld = () => {
     translateSDF([0, 1.0925, -0.575], boxSDF([0.46,  0.345, 0.6325])),
   );
 
-  const doorCutout     = translateSDF([0, 1.15, -0.23],     boxSDF([0.253, 0.288, 0.345]));
+  const doorCutout     = translateSDF([0, 1.15, -0.04],     boxSDF([0.253, 0.288, 0.540]));
   const trapDoorCutout = translateSDF([0, 0.46, -0.69],     boxSDF([0.253, 0.575, 0.253]));
   const portholePort   = translateSDF([-0.575, -0.23, 0.40], sphereSDF(0.276));
   const portholeStbd   = translateSDF([+0.575, -0.23, 0.40], sphereSDF(0.276));
