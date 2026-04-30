@@ -26,6 +26,7 @@ import {
 import * as bowl      from './zones/bowl.js';
 import * as kitchen   from './zones/kitchen.js';
 import * as mousehole from './secrets/mousehole.js';
+import * as chamber   from './secrets/chamber.js';
 
 /** Y-coordinate of the water surface (= bowl rim). */
 export const WATER_SURFACE_Y = 6.25;
@@ -59,6 +60,7 @@ const regionFn = (px, py, pz) => {
     return REGION_BOWL;
   }
   if (mousehole.isInMousehole(px, py, pz)) return mousehole.REGION_MOUSEHOLE;
+  if (chamber.isInChamber(px, py, pz))     return chamber.REGION_CHAMBER;
   return REGION_KITCHEN;
 };
 
@@ -86,12 +88,13 @@ export const createWorld = () => {
     boundingRadius: BOWL_OUTER_R + 0.2,
   });
 
-  // Per-region items. Order matters: kitchen registers the 'room' item,
-  // and the mousehole's addToScene mutates it in place to carve the
-  // entrance tunnel — so kitchen must come first.
+  // Per-region items. Order matters: kitchen registers the 'room' and
+  // 'window' items, and both secret zones mutate them in place to carve
+  // their entrances — so kitchen must come first.
   bowl.addToScene(scene);
   kitchen.addToScene(scene);
   mousehole.addToScene(scene);
+  chamber.addToScene(scene);
 
   return scene;
 };
