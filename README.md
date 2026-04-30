@@ -37,7 +37,11 @@ node serve.js
   - `tracer.js` — sphere-trace a ray batch through a scene
   - `painter.js` — paint a per-cell color signal onto a CSS grid host
 - `aquarium/` — the kitchen fish-bowl scene
-  - `world.js` — scene composition (tank decor, furnishings)
+  - `world.js` — scene composition orchestrator: regionFn, shared dims, lighting, region-spanning items
+  - `zones/` — per-region item modules; each tags its items with the matching `regionKey`
+    - `bowl.js` — tank decor (sand, rocks, plants, chest, ship + mermaid)
+    - `kitchen.js` — furnishings (table, fridge, counter, sink, window, door, artworks)
+    - `secrets/` — additional *hidden locales* to hunt
   - `controls.js` — pointer-based 3D swimming
   - `physics.js` — SDF-gradient collision sliding
   - `bubblePump.js` — pool of rising bubble Items
