@@ -381,9 +381,9 @@ export const addToScene = (scene) => {
   // forces cutSDF to report a true positive distance for points
   // hovering above the sink opening, so physics doesn't push the fish off
   // a phantom counter top.
-  // Counter starts at X=-12 (was -14) so there's a 2-unit gap between the
-  // counter's left edge and the fridge's right edge — matches the gap on
-  // the opposite side of the fridge (between fridge X=-20 and the back
+  // Counter starts at X=-12 so there's a 2-unit gap between the counter's
+  // left edge and the fridge's right edge — matches the gap on the
+  // opposite side of the fridge (between fridge X=-20 and the back
   // wall at X=-22).
   const sinkVoidInCounter = translateSDF([3, 6.4, 0.5], boxSDF([1.4, 3.5, 0.9]));
   add({

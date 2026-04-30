@@ -321,11 +321,10 @@ const cowboyPosterColorFn = (lpx, lpy, lpz) => {
   return [200 - 65 * skyT, 150 - 65 * skyT, 90 - 40 * skyT];
 };
 
-// Pinup Mouse poster — 50s starlet pose. Cleaner silhouette than v1: the
-// body is one continuous Y-keyed half-width curve (head → neck → bust →
-// waist → hips → flared skirt) so there are no overlapping ellipses
-// muddying the figure. Pearl necklace, polka-dot dress, cigarette
-// holder with red ember, starburst background.
+// Pinup Mouse poster — 50s starlet pose. The body is one continuous
+// Y-keyed half-width curve (head → neck → bust → waist → hips → flared
+// skirt). Pearl necklace, polka-dot dress, cigarette holder with red
+// ember, starburst background.
 const pinupPosterColorFn = (lpx, lpy, lpz) => {
   const halfX = 0.225, halfY = 0.20;
   if (lpz < 0) return [45, 25, 35];
