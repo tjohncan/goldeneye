@@ -23,8 +23,9 @@ import {
   openTopBowlSDF,
 } from '../core/scene.js';
 
-import * as bowl    from './zones/bowl.js';
-import * as kitchen from './zones/kitchen.js';
+import * as bowl      from './zones/bowl.js';
+import * as kitchen   from './zones/kitchen.js';
+import * as mousehole from './secrets/mousehole.js';
 
 /** Y-coordinate of the water surface (= bowl rim). */
 export const WATER_SURFACE_Y = 6.25;
@@ -46,9 +47,9 @@ export const REGION_BOWL    = 'bowl';
 export const REGION_KITCHEN = 'kitchen';
 
 /**
- * Maps a world-space point to a region key. The bowl region is the open
- * interior of the fishbowl (below the rim, inside the inner radius);
- * everything else is kitchen.
+ * Maps a world-space point to a region key. Checks are ordered by
+ * specificity: bowl interior first (a small sphere inside the kitchen),
+ * then each secret zone's predicate, then kitchen as the catch-all.
  *
  * @type {(px: number, py: number, pz: number) => string}
  */
@@ -57,6 +58,7 @@ const regionFn = (px, py, pz) => {
       px * px + py * py + pz * pz < BOWL_INNER_R * BOWL_INNER_R) {
     return REGION_BOWL;
   }
+  if (mousehole.isInMousehole(px, py, pz)) return mousehole.REGION_MOUSEHOLE;
   return REGION_KITCHEN;
 };
 
@@ -84,9 +86,12 @@ export const createWorld = () => {
     boundingRadius: BOWL_OUTER_R + 0.2,
   });
 
-  // Per-region items.
+  // Per-region items. Order matters: kitchen registers the 'room' item,
+  // and the mousehole's addToScene mutates it in place to carve the
+  // entrance tunnel — so kitchen must come first.
   bowl.addToScene(scene);
   kitchen.addToScene(scene);
+  mousehole.addToScene(scene);
 
   return scene;
 };
