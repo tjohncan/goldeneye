@@ -40,6 +40,11 @@ const applyDeadzone = (v, dz) => {
  *   coastTau?:      number,   // decay time constant after release (s)
  *   yawDeadzone?:   number,   // central fraction of host width with no yaw (0..1)
  *   pitchDeadzone?: number,   // central fraction of host height with no pitch
+ *   speedMul?:      (pos: import('../core/r3.js').Vec3) => number,
+ *                             // per-frame multiplier on forward speed, keyed off
+ *                             // current camera position. Lets callers boost
+ *                             // speed in larger regions (e.g. the outside cove)
+ *                             // without rewriting locomotion. Default: 1.
  * }} opts
  * @returns {{ update: (timeMs: number) => void, destroy: () => void }}
  */
@@ -53,6 +58,7 @@ export const bindControls = ({
   coastTau      = 0.4,
   yawDeadzone   = 0,
   pitchDeadzone = 0,
+  speedMul      = () => 1,
 }) => {
   /** @type {Map<number, {x: number, y: number, isRight: boolean}>} */
   const pointers = new Map();
@@ -127,7 +133,7 @@ export const bindControls = ({
         const yawInput   = applyDeadzone(dx, yawDeadzone);
         const pitchInput = applyDeadzone(dy, pitchDeadzone);
 
-        const targetVelFwd   =  direction * speed;
+        const targetVelFwd   =  direction * speed * speedMul(camera.position);
         const targetVelYaw   = -yawInput   * yawRate;
         const targetVelPitch = -pitchInput * pitchRate;
 
