@@ -17,7 +17,6 @@ import * as r3 from './r3.js';
 /** @typedef {import('./r3.js').Quat} Quat */
 /** @typedef {{ points: Vec3[] }} LensShape */
 /** @typedef {[number, number]} ScreenCell */
-/** @typedef {Array<[number, number]>} CellWeights */
 
 // Closeness function: score = (alpha - dist)^beta, where dist is Euclidean
 // distance (in cell units) from the screen cell to a lens point's projection.
@@ -86,7 +85,7 @@ export class Camera {
     /** @type {Quat} world-space orientation (identity = camera looks down -Z) */
     this.orientation = r3.quatId();
 
-    /** @type {{ activeCells: ScreenCell[], weights: CellWeights[] }} baked once */
+    /** @type {{ activeCells: ScreenCell[], weightIdx: Int32Array, weightVal: Float32Array, weightStarts: Int32Array }} baked once */
     this.screen = bakeScreen(this.lensPoints, screenW, screenH);
 
     // Pre-allocated per-cell color buffer ([r0, g0, b0, r1, g1, b1, ...]),
@@ -149,17 +148,19 @@ export class Camera {
    *          across calls — consume before the next blend().
    */
   blend(lensColors) {
-    const cells   = this.screen.activeCells;
-    const weights = this.screen.weights;
-    const colors  = this._cellColors;
-    const cellsLen = cells.length;
+    const cells        = this.screen.activeCells;
+    const weightIdx    = this.screen.weightIdx;
+    const weightVal    = this.screen.weightVal;
+    const weightStarts = this.screen.weightStarts;
+    const colors       = this._cellColors;
+    const cellsLen     = cells.length;
     for (let ci = 0; ci < cellsLen; ci++) {
-      const cellWeights = weights[ci];
+      const s = weightStarts[ci];
+      const e = weightStarts[ci + 1];
       let r = 0, g = 0, b = 0;
-      for (let k = 0; k < cellWeights.length; k++) {
-        const pair = cellWeights[k];
-        const li = pair[0] * 3;
-        const w  = pair[1];
+      for (let k = s; k < e; k++) {
+        const li = weightIdx[k] * 3;
+        const w  = weightVal[k];
         r += lensColors[li]     * w;
         g += lensColors[li + 1] * w;
         b += lensColors[li + 2] * w;
@@ -184,10 +185,15 @@ export class Camera {
  * centers. Returns only cells with at least one lens neighbor; the rest
  * paint as background.
  *
+ * Output is a flat representation: `weightIdx`/`weightVal` are concatenated
+ * lens-point-index/weight pairs across all active cells, and `weightStarts`
+ * gives each cell's [start, end) range into them. Reads cleanly from the
+ * blend hot loop without per-pair pointer chasing.
+ *
  * @param {Vec3[]} lensPoints
  * @param {number} W
  * @param {number} H
- * @returns {{ activeCells: ScreenCell[], weights: CellWeights[] }}
+ * @returns {{ activeCells: ScreenCell[], weightIdx: Int32Array, weightVal: Float32Array, weightStarts: Int32Array }}
  */
 const bakeScreen = (lensPoints, W, H) => {
   const projected = lensPoints.map(([x, y]) => [
@@ -197,8 +203,9 @@ const bakeScreen = (lensPoints, W, H) => {
 
   /** @type {ScreenCell[]} */
   const activeCells = [];
-  /** @type {CellWeights[]} */
-  const weights = [];
+  /** Per-cell scratch list of [lensIdx, normalizedWeight], flattened later. */
+  /** @type {Array<Array<[number, number]>>} */
+  const cellWeights = [];
 
   for (let cy = 0; cy <= H; cy++) {
     for (let cx = 0; cx <= W; cx++) {
@@ -224,9 +231,27 @@ const bakeScreen = (lensPoints, W, H) => {
       if (total < 1e-5) continue;
 
       activeCells.push([cx, cy]);
-      weights.push(neighborhood.map(([idx, score]) => [idx, score / total]));
+      cellWeights.push(neighborhood.map(([idx, score]) => [idx, score / total]));
     }
   }
 
-  return { activeCells, weights };
+  // Flatten into typed arrays + per-cell start offsets.
+  let totalPairs = 0;
+  for (let ci = 0; ci < cellWeights.length; ci++) totalPairs += cellWeights[ci].length;
+  const weightIdx    = new Int32Array(totalPairs);
+  const weightVal    = new Float32Array(totalPairs);
+  const weightStarts = new Int32Array(cellWeights.length + 1);
+  let off = 0;
+  for (let ci = 0; ci < cellWeights.length; ci++) {
+    weightStarts[ci] = off;
+    const cw = cellWeights[ci];
+    for (let k = 0; k < cw.length; k++) {
+      weightIdx[off] = cw[k][0];
+      weightVal[off] = cw[k][1];
+      off++;
+    }
+  }
+  weightStarts[cellWeights.length] = off;
+
+  return { activeCells, weightIdx, weightVal, weightStarts };
 };
