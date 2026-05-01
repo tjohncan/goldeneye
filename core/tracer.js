@@ -40,12 +40,16 @@ import { sdfGrad } from './scene.js';
  *   lightDir:   Vec3,    // unit vector from surface toward the light source
  *   ambient:    number,  // 0..1 baseline brightness for surfaces facing away
  *   background: Vec3,    // [r, g, b] 0..255 mixed in for unaccumulated alpha
+ *   maxDist?:   number,  // optional override for the ray distance cap; defaults
+ *                        // to the module-level MAX_DIST. Useful when a scene's
+ *                        // largest dimension exceeds the default (e.g. a very
+ *                        // large bounding shell that rays need to traverse).
  * }} Lighting
  */
 
 const MAX_STEPS    = 44;
 const HIT_EPSILON  = 0.001;
-const MAX_DIST     = 1000;
+const MAX_DIST     = 1000;      // default safety cap; per-call override via lighting.maxDist
 const NORMAL_EPS   = 0.0015;
 const STEP_PAST    = 0.003;     // small forward step after a translucent hit
 const EXIT_EPS     = 0.001;     // SDF must exceed this to consider us "out"
@@ -75,6 +79,11 @@ let _insideLen = 0;
 /** Active region-mapping function for the current trace() call (or null if
  *  the scene didn't supply one). Set in trace(), consumed by marchRay(). */
 let _regionFn = null;
+
+/** Active ray distance cap for the current trace() call. Set from
+ *  lighting.maxDist (with module-level MAX_DIST fallback) in trace(),
+ *  consumed by marchRay(). */
+let _maxDist = MAX_DIST;
 
 
 /**
@@ -189,7 +198,7 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
       t += nearestD;
     }
 
-    if (t > MAX_DIST) break;
+    if (t > _maxDist) break;
   }
 
   // Background mix for unaccumulated alpha.
@@ -224,6 +233,7 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   }
 
   _regionFn = scene.regionFn || null;
+  _maxDist  = lighting.maxDist ?? MAX_DIST;
 
   for (let i = 0; i < N; i++) {
     const dir = directions[i];
