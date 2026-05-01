@@ -28,8 +28,9 @@ camera.position = [-4, 0, 4];
 const controls = bindControls({
   host: document.getElementById('screen-wrap'),
   camera,
-  speed:   1.44,
-  yawRate: 1.44,
+  speed:    1.44,
+  yawRate:  1.44,
+  speedMul: scene.speedMul,
 });
 const physics = bindPhysics({ camera, scene });
 const bubblePump = createBubblePump({
