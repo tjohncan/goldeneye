@@ -24,11 +24,22 @@ import {
 
 export const REGION_CHAMBER = 'chamber';
 
-// Region predicate. The chamber lives entirely past the kitchen back
-// wall (z = -22). The chamber-room shell handles the rest of that
-// half-space as wall material; items only exist in a small volume
-// around the sun's world position.
-export const isInChamber = (px, py, pz) => pz < -22.0;
+// Region predicate. Bounded tightly to a box around the actual chamber
+// geometry (entry pipe + torus + chamber interior) so the chamber-room
+// item — whose invertSDF-of-air-volumes is "material everywhere except
+// the air shape, extending to infinity" — only gets considered for
+// points genuinely in the chamber zone. Without these bounds, a fast
+// fish drifting to e.g. (5, +14, -25) would be tagged chamber and
+// physics would shove it into the actual interior. Bounds chosen to
+// cover:
+//   - pipe          x ∈ [10.05, 10.95], y ∈ [3.75, 4.65], z ∈ [-22.6, -21.5]
+//   - torus         x ∈ [9.05, 11.95],  y ∈ [3.75, 4.65], z ∈ [-23.95, -23.05]
+//   - chamber box   x ∈ [9.3, 11.7],    y ∈ [3.5, 4.9],   z ∈ [-26.5, -23.5]
+// plus a small margin in each direction.
+export const isInChamber = (px, py, pz) =>
+  px >= +8.5 && px <= +12.5 &&
+  py >= +3 && py <= +5.5 &&
+  pz >= -27 && pz <= -22;
 
 
 // ─────────────────────────── geometry ───────────────────────────
@@ -103,11 +114,18 @@ const chamberBoxSdf = translateSDF(
   [SUN_X, SUN_Y, CHAMBER_CENTER_Z],
   boxSDF([CHAMBER_HALF_X, CHAMBER_HALF_Y, CHAMBER_HALF_Z]),
 );
-const chamberRoomSdf = invertSDF(unionSDF(
+// Combined air-volume SDF (chamber box ∪ torus tube ∪ entry pipe).
+// Exported so the outside zone's house-exterior shell can cut this
+// volume out of its wall material; without that cut, the wall
+// geometrically overlaps the secret zone and physics probes near the
+// air-pocket boundary would let the wall's gradient shove the fish
+// out onto the cove ground.
+export const chamberAirSdf = unionSDF(
   chamberBoxSdf,
   torusOuterWorldSdf,
   pipeVolumeWorldSdf,
-));
+);
+const chamberRoomSdf = invertSDF(chamberAirSdf);
 
 // Gyroid — a triply-periodic minimal surface. The unscaled function
 // returns a value that's not a true SDF (not Lipschitz-1), but

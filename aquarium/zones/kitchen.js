@@ -177,6 +177,28 @@ const windowColorFn = (lpx, lpy, lpz) => {
   return [r, g, b];
 };
 
+// Paneled door: outer frame + central stile + two horizontal rails (=>
+// 2 columns × 3 rows of recessed panels), with woodgrain stripes inside
+// each panel. The keyhole bore is carved out of the door's SDF in
+// secrets/outside.js, and the brass knob torus is rendered as a separate
+// item there — this colorFn just paints the wood structure.
+const doorColorFn = (lpx, lpy, lpz) => {
+  const halfX = 3.5, halfY = 11;
+  const FRAME_W = 0.5;
+  const STILE_W = 0.20;
+  const RAIL_W  = 0.20;
+  const DARK    = [70, 45, 25];
+
+  if (Math.abs(lpx) > halfX - FRAME_W || Math.abs(lpy) > halfY - FRAME_W) return DARK;
+  if (Math.abs(lpx) < STILE_W) return DARK;
+  const innerHalfY = halfY - FRAME_W;
+  if (Math.abs(lpy - innerHalfY * (1/3)) < RAIL_W) return DARK;
+  if (Math.abs(lpy + innerHalfY * (1/3)) < RAIL_W) return DARK;
+
+  const grain = Math.sin(lpy * 6 + lpx * 1.5) * 0.4 + Math.sin(lpx * 12) * 0.15;
+  return [115 + 25 * grain, 80 + 16 * grain, 50 + 10 * grain];
+};
+
 const paintingColorFn = (lpx, lpy, lpz) => {
   const halfX = 3, halfY = 2.5;
   const frameW = 0.3;
@@ -439,10 +461,12 @@ export const addToScene = (scene) => {
   });
 
   // Closed door on the OPPOSITE wall (front wall, +Z=22). Wider than the
-  // fridge so it reads as a person-sized door.
+  // fridge so it reads as a person-sized door. The keyhole bore +
+  // brass knob get added in secrets/outside.js.
   add({
     name:     'door',
     color:    [120, 80, 50],
+    colorFn:  doorColorFn,
     position: [+15, -2, ROOM_HALF_Z - 0.05],
     sdf:      boxSDF([3.5, 11, 0.05]),
     boundingRadius: 12,

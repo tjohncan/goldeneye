@@ -28,13 +28,20 @@ import {
 
 export const REGION_MOUSEHOLE = 'mousehole';
 
-// Region predicate. The kitchen's left wall sits at x = -22; everything
-// past that wall (in the unbounded -X half-space) is "behind the wall".
-// Most of that half-space is wall material that the fish can never reach
-// physically and that no normal ray exits the kitchen toward — so a
-// generous predicate is fine. The mousehole-room item (below) defines
-// the actual air pocket inside.
-export const isInMousehole = (px, py, pz) => px < -22.0;
+// Region predicate. Bounded tightly to a box around the actual mousehole
+// geometry (interior pocket + tunnel) so the mousehole-room item — whose
+// invertSDF-of-air-volumes is "material everywhere except the air pocket,
+// extending to infinity" — only gets considered for points genuinely in
+// the mousehole zone. Without these bounds, a fast fish drifting to
+// e.g. (-30, +14, 21) would be tagged mousehole and physics would shove
+// it into the actual interior. Bounds chosen to cover:
+//   - tunnel        x ∈ [-25.7, -21],  y ∈ [-13, -12.4], z ∈ [20.5, 21.3]
+//   - interior box  x ∈ [-27.8, -25.2], y ∈ [-13, -12],   z ∈ [19.2, 21.8]
+// plus a small margin in each direction.
+export const isInMousehole = (px, py, pz) =>
+  px >= -27.8 && px <= -22 &&
+  py >= -13 && py <= -11.5 &&
+  pz >= +18.5 && pz <= +22;
 
 
 // ──────────────────────────── geometry ────────────────────────────
@@ -104,9 +111,15 @@ const interiorBoxSdf = translateSDF(
   boxSDF([INTERIOR_HALF_X, INTERIOR_HALF_Y, INTERIOR_HALF_Z]),
 );
 
-// Mousehole-room: material exists everywhere except inside the interior
-// pocket and the tunnel. Inverted-union of the two air volumes.
-const mouseholeRoomSdf = invertSDF(unionSDF(interiorBoxSdf, tunnelSdf));
+// Combined air-volume SDF (interior pocket ∪ tunnel). Exported so the
+// outside zone's house-exterior shell can cut this volume out of its
+// wall material — without that cut, the wall geometrically overlaps
+// the secret pocket, and a fish near the pocket's back wall would have
+// physics probes touch the outside region and get shoved onto the cove
+// ground by the wall's gradient. The mousehole-room item itself is
+// the inverted-union — material everywhere except in the air shape.
+export const mouseholeAirSdf = unionSDF(interiorBoxSdf, tunnelSdf);
+const mouseholeRoomSdf = invertSDF(mouseholeAirSdf);
 
 
 // ──────────────────────────── colorFns ────────────────────────────
