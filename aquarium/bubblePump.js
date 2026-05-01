@@ -11,7 +11,8 @@
 // — a slot becomes "active" on spawn (visibility on) and parks itself out
 // of the way (visibility off) when it reaches the surface.
 
-import { sphereSDF } from '../core/scene.js';
+import { sphereSDF, registerItem } from '../core/scene.js';
+import { REGION_BOWL } from './world.js';
 
 /** @typedef {import('../core/r3.js').Vec3} Vec3 */
 /** @typedef {import('../core/scene.js').Scene} Scene */
@@ -57,9 +58,9 @@ export const createBubblePump = ({
       collides:  false,    // fish swims through bubbles
       opacity:   0.3,      // see-through, with a hint of bubble color tinting the background
       boundingRadius: maxSize,  // tight bound — bubbles are visually tiny, so the per-ray bounding-sphere filter drops them aggressively when off-axis
-      regionKey: 'bowl',        // bubbles live entirely inside the bowl interior
+      regionKey: REGION_BOWL,   // bubbles live entirely inside the bowl interior
     };
-    scene.push(item);
+    registerItem(scene, item);
     pool.push({ item, active: false, vy: 0 });
   }
 
@@ -82,11 +83,9 @@ export const createBubblePump = ({
           if (slot.active) continue;
           slot.active = true;
           slot.item.invisible = false;
-          slot.item.position = [
-            position[0] + (Math.random() - 0.5) * 2 * SPAWN_JITTER_RADIUS,
-            position[1],
-            position[2] + (Math.random() - 0.5) * 2 * SPAWN_JITTER_RADIUS,
-          ];
+          slot.item.position[0] = position[0] + (Math.random() - 0.5) * 2 * SPAWN_JITTER_RADIUS;
+          slot.item.position[1] = position[1];
+          slot.item.position[2] = position[2] + (Math.random() - 0.5) * 2 * SPAWN_JITTER_RADIUS;
           slot.vy = riseRate * (1 + (Math.random() - 0.5) * 2 * RISE_JITTER_FRAC);
           slot.item.sdf = sphereSDF(minSize + Math.random() * (maxSize - minSize));
           lastSpawnMs = timeMs;
@@ -103,7 +102,7 @@ export const createBubblePump = ({
           slot.active = false;
           slot.item.invisible = true;
         } else {
-          slot.item.position = [slot.item.position[0], newY, slot.item.position[2]];
+          slot.item.position[1] = newY;
         }
       }
     },
