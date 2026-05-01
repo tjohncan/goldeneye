@@ -70,6 +70,15 @@ export class Painter {
       }
     }
     host.appendChild(frag);
+
+    // Cache of `cell.style` refs aligned with the activeCells array a
+    // caller passes to paint() — built lazily on first paint, reused
+    // every frame after. Lets the hot loop do `_styles[i].backgroundColor
+    // = ...` instead of double-indirection through the [cx][cy] grid.
+    /** @type {CSSStyleDeclaration[] | null} */
+    this._styles = null;
+    /** @type {ScreenCell[] | null} */
+    this._stylesFor = null;
   }
 
   /**
@@ -81,11 +90,21 @@ export class Painter {
    *        a flat [r0,g0,b0,r1,g1,b1,...] aligned with `cells`.
    */
   paint({ cells, colors }) {
+    if (this._stylesFor !== cells) {
+      const cells2D = this.cells;
+      const styles = new Array(cells.length);
+      for (let i = 0; i < cells.length; i++) {
+        styles[i] = cells2D[cells[i][0]][cells[i][1]].style;
+      }
+      this._styles = styles;
+      this._stylesFor = cells;
+    }
+
     const sh = this.shimmer;
+    const styles = this._styles;
     const cellsLen = cells.length;
 
     for (let i = 0; i < cellsLen; i++) {
-      const cell = cells[i];
       const ci = i * 3;
       let r = colors[ci], g = colors[ci + 1], b = colors[ci + 2];
 
@@ -99,8 +118,7 @@ export class Painter {
       if (g > 255) g = 255; else if (g < 0) g = 0;
       if (b > 255) b = 255; else if (b < 0) b = 0;
 
-      this.cells[cell[0]][cell[1]].style.backgroundColor =
-        `rgb(${r | 0},${g | 0},${b | 0})`;
+      styles[i].backgroundColor = `rgb(${r | 0},${g | 0},${b | 0})`;
     }
   }
 }
