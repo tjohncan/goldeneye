@@ -131,3 +131,65 @@ export const quatRotate = ([qw, qx, qy, qz], [vx, vy, vz]) => {
     vz + qw * tz + (qx * ty - qy * tx),
   ];
 };
+
+/**
+ * Quaternion that orients the camera-local frame (forward = -Z, up = +Y,
+ * right = +X) so that camera-forward points from `eye` toward `target`,
+ * with camera-up landing as close to the supplied `up` reference as
+ * possible while staying perpendicular to forward.
+ *
+ * `up` is a HINT, not a constraint — camera-up has to be perpendicular
+ * to forward, so the actual camera-up ends up being the projection of
+ * `up` onto the plane perpendicular to forward (i.e., world-up with the
+ * forward-aligned component removed). Defaults to [0, 1, 0] (Y-up,
+ * matching the engine convention); pass a different vector to roll the
+ * spawn pose around the forward axis.
+ *
+ * Edge cases:
+ *   - target = eye returns identity (no direction to look).
+ *   - forward parallel to `up` (looking straight up/down with default
+ *     world-up): cross is degenerate, so we fall back to a perpendicular
+ *     world axis as the up reference. The camera's roll is implementation-
+ *     defined in this case — pass an explicit `up` to pin it.
+ *
+ * @param {Vec3} eye
+ * @param {Vec3} target
+ * @param {Vec3} [up=[0, 1, 0]]
+ * @returns {Quat}
+ */
+export const quatLookAt = (eye, target, up = [0, 1, 0]) => {
+  const fwd = normalize(sub(target, eye));
+  if (fwd[0] === 0 && fwd[1] === 0 && fwd[2] === 0) return quatId();
+  // right = forward × up. Degenerate when forward is parallel to up; pick
+  // a perpendicular world axis as a fallback up reference.
+  let right = cross(fwd, up);
+  if (len2(right) < 1e-9) {
+    const fallback = Math.abs(fwd[0]) < 0.9 ? [1, 0, 0] : [0, 0, 1];
+    right = cross(fwd, fallback);
+  }
+  right = normalize(right);
+  const camUp = cross(right, fwd);   // already unit-length: right ⊥ fwd, both unit
+  // Build quat from the orthonormal basis. Rotation matrix columns are the
+  // world-space directions of camera-local axes (right=+X, up=+Y, fwd=-Z).
+  const m00 = right[0], m01 = camUp[0], m02 = -fwd[0];
+  const m10 = right[1], m11 = camUp[1], m12 = -fwd[1];
+  const m20 = right[2], m21 = camUp[2], m22 = -fwd[2];
+  // Standard rotation-matrix-to-quaternion conversion (Shepperd's method),
+  // branching on which diagonal element is largest to avoid sqrt of a
+  // tiny number.
+  const trace = m00 + m11 + m22;
+  if (trace > 0) {
+    const s = Math.sqrt(trace + 1) * 2;
+    return [0.25 * s, (m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s];
+  }
+  if (m00 > m11 && m00 > m22) {
+    const s = Math.sqrt(1 + m00 - m11 - m22) * 2;
+    return [(m21 - m12) / s, 0.25 * s, (m01 + m10) / s, (m02 + m20) / s];
+  }
+  if (m11 > m22) {
+    const s = Math.sqrt(1 + m11 - m00 - m22) * 2;
+    return [(m02 - m20) / s, (m01 + m10) / s, 0.25 * s, (m12 + m21) / s];
+  }
+  const s = Math.sqrt(1 + m22 - m00 - m11) * 2;
+  return [(m10 - m01) / s, (m02 + m20) / s, (m12 + m21) / s, 0.25 * s];
+};
