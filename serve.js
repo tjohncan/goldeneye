@@ -5,7 +5,8 @@ const { readFile }     = require('node:fs/promises');
 const { extname, join, normalize, sep } = require('node:path');
 
 const PORT = 8080;
-const ROOT = process.cwd();
+// Serve from the script's directory, not the cwd.
+const ROOT = __dirname;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
