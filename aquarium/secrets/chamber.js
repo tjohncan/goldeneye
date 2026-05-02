@@ -21,6 +21,7 @@ import {
   unionSDF, intersectionSDF, smoothUnionSDF, cutSDF, invertSDF,
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../core/scene.js';
+import { frameTime } from '../../core/tracer.js';
 
 export const REGION_CHAMBER = 'chamber';
 
@@ -142,7 +143,7 @@ const GYROID_RATE_Y = 0.43;
 const GYROID_RATE_Z = 0.57;
 const gyroidSdf = intersectionSDF(
   (px, py, pz) => {
-    const t = Date.now() / 1000;
+    const t = frameTime / 1000;
     const cx = Math.cos(t * GYROID_RATE_X), sx = Math.sin(t * GYROID_RATE_X);
     const cy = Math.cos(t * GYROID_RATE_Y), sy = Math.sin(t * GYROID_RATE_Y);
     const cz = Math.cos(t * GYROID_RATE_Z), sz = Math.sin(t * GYROID_RATE_Z);
@@ -233,7 +234,7 @@ const marqueeColorFn = (lpx, lpy, lpz) => {
   if (strip_lpy < 0 || strip_lpy > MARQUEE_GLYPH_H) return [12, 8, 18];
 
   // Scroll: time-based offset, then wrap into [0, totalW).
-  const t = Date.now() / 1000;
+  const t = frameTime / 1000;
   const totalW = MARQUEE_TEXT.length * MARQUEE_GLYPH_W;
   const offsetX = lpx + t * SCROLL_SPEED;
   const wrappedX = ((offsetX % totalW) + totalW) % totalW;
@@ -292,7 +293,7 @@ const chamberRoomColorFn = (lpx, lpy, lpz) => {
 // on a static color. Pulses through the entire chamber atmosphere
 // like the gyroid is leaking light into the room.
 const chamberGlowColorFn = (lpx, lpy, lpz) => {
-  const t = Date.now() / 1000;
+  const t = frameTime / 1000;
   const r = 70 + 90 * Math.sin(t * 0.6);
   const g = 70 + 90 * Math.sin(t * 0.85 + 2.1);
   const b = 90 + 90 * Math.sin(t * 1.05 + 4.3);
@@ -302,7 +303,7 @@ const chamberGlowColorFn = (lpx, lpy, lpz) => {
 const gyroidColorFn = (lpx, lpy, lpz) => {
   // Iridescent palette keyed off local position — different per ridge,
   // mutating fast enough for the gyroid to feel actively alive.
-  const t = Date.now() / 500;
+  const t = frameTime / 500;
   const r = 100 + 100 * Math.sin(lpx * 8 + t);
   const g = 100 + 100 * Math.sin(lpy * 8 + t * 1.3);
   const b = 150 + 100 * Math.sin(lpz * 8 + t * 0.7);

@@ -25,6 +25,7 @@ import {
   unionSDF, intersectionSDF, smoothUnionSDF, cutSDF, invertSDF,
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../core/scene.js';
+import { frameTime } from '../../core/tracer.js';
 
 export const REGION_MOUSEHOLE = 'mousehole';
 
@@ -165,8 +166,7 @@ const bedColorFn = (lpx, lpy, lpz) => {
 // rolling static. The TV faces -X (into the room from the entrance wall),
 // so the screen is on the -X face (lpx < 0). Antenna whiskers stick up
 // out of the top — anything above the body top is matte silver.
-// Date.now() varies between frames so the scanline drifts in real time;
-// Math.random() gives per-hit pixel noise.
+// frameTime drives the scanline drift; Math.random() gives per-hit pixel noise.
 const tvColorFn = (lpx, lpy, lpz) => {
   // Antenna whiskers — capsules well above the body top
   if (lpy > 0.12) return [180, 180, 175];
@@ -179,7 +179,7 @@ const tvColorFn = (lpx, lpy, lpz) => {
   if (Math.abs(lpz) > 0.10 || Math.abs(lpy) > 0.075) return [22, 18, 18];
   // Static screen
   const noise = Math.random();
-  const t = (Date.now() % 1500) / 1500;
+  const t = (frameTime % 1500) / 1500;
   const scanlineY = 0.075 - t * 0.15;
   let brightness = 110 + 130 * noise;
   if (Math.abs(lpy - scanlineY) < 0.012) brightness *= 0.4;
@@ -191,7 +191,7 @@ const tvColorFn = (lpx, lpy, lpz) => {
 // room ambient glow (filling the interior) read from this so they pulse
 // in lockstep.
 const glowPulse = () => {
-  const t = Date.now() / 1000;
+  const t = frameTime / 1000;
   return 0.5 + 0.5 * Math.sin(t * 7 + Math.sin(t * 13) * 2);
 };
 
