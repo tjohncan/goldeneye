@@ -85,6 +85,14 @@ let _regionFn = null;
  *  consumed by marchRay(). */
 let _maxDist = MAX_DIST;
 
+/** Frame time in milliseconds, sampled once at the start of each trace().
+ *  Time-varying SDFs and colorFns read this instead of calling Date.now() /
+ *  performance.now() per query — a single ray traverses thousands of SDF
+ *  evaluations, and they all want the same frame timestamp. Exported as a
+ *  live binding so consumers `import { frameTime } from '../core/tracer.js'`
+ *  and read the current value each call. */
+export let frameTime = 0;
+
 
 /**
  * March a single ray through a pre-filtered scene; write the front-to-back
@@ -234,6 +242,7 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
 
   _regionFn = scene.regionFn || null;
   _maxDist  = lighting.maxDist ?? MAX_DIST;
+  frameTime = performance.now();
 
   for (let i = 0; i < N; i++) {
     const dir = directions[i];
