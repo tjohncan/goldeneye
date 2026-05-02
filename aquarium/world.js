@@ -108,12 +108,18 @@ const SPEED_MUL_BY_REGION = {
  * Build the kitchen + fish-bowl scene. Region-spanning items are
  * registered here; per-region items are added by their zone modules.
  *
- * @returns {import('../core/scene.js').Scene}
+ * Returns the scene plus a `speedMul(pos)` callback for the controls
+ * layer — kept off the Scene type itself, since the tracer/physics
+ * have no use for it and shouldn't have to ignore an extra field.
+ *
+ * @returns {{
+ *   scene:    import('../core/scene.js').Scene,
+ *   speedMul: (pos: import('../core/r3.js').Vec3) => number,
+ * }}
  */
 export const createWorld = () => {
   const scene = createScene();
   scene.regionFn = regionFn;
-  scene.speedMul = ([px, py, pz]) => SPEED_MUL_BY_REGION[regionFn(px, py, pz)] ?? 1;
 
   // Fishbowl glass — visible from inside (bowl rays) AND from outside
   // (kitchen rays), so genuinely region-spanning. No regionKey.
@@ -135,5 +141,6 @@ export const createWorld = () => {
   chamber.addToScene(scene);
   outside.addToScene(scene);
 
-  return scene;
+  const speedMul = ([px, py, pz]) => SPEED_MUL_BY_REGION[regionFn(px, py, pz)] ?? 1;
+  return { scene, speedMul };
 };

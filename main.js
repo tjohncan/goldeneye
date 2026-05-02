@@ -21,7 +21,7 @@ const painter = new Painter({
   screenH: SCREEN_H,
   shimmer: 0.04,
 });
-const scene = createWorld();
+const { scene, speedMul } = createWorld();
 
 camera.position = [-4, 0, 4];
 
@@ -30,7 +30,7 @@ const controls = bindControls({
   camera,
   speed:    1.44,
   yawRate:  1.44,
-  speedMul: scene.speedMul,
+  speedMul,
 });
 const physics = bindPhysics({ camera, scene });
 const bubblePump = createBubblePump({
