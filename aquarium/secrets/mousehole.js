@@ -303,11 +303,27 @@ const cowboyPosterColorFn = (lpx, lpy, lpz) => {
   // Legs — two short verticals from bottom of body
   if (Math.abs(lpx - 0.025) < 0.018 && lpy > -0.18 && lpy < -0.11) return SIL;
   if (Math.abs(lpx + 0.025) < 0.018 && lpy > -0.18 && lpy < -0.11) return SIL;
-  // Tail — curl out behind
+  // Tail — emerges from behind the left leg as a backwards-J curl. Two
+  // capsule strokes, anchored INSIDE the leg silhouette at the base so it
+  // visibly attaches (not a floating arc). Body/leg checks above already
+  // paint those pixels SIL — same color, no seam.
   {
-    const tx = lpx + 0.07, ty = lpy + 0.09;
-    const t2 = tx * tx + ty * ty;
-    if (t2 > 0.045 * 0.045 && t2 < 0.065 * 0.065 && tx < 0 && ty < 0) return SIL;
+    // Base segment: leg anchor → mid-curve, dropping down-left.
+    const x1 = -0.035, y1 = -0.155, x2 = -0.075, y2 = -0.175;
+    const dx = x2 - x1, dy = y2 - y1;
+    let t = ((lpx - x1) * dx + (lpy - y1) * dy) / (dx * dx + dy * dy);
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const cx = lpx - (x1 + dx * t), cy = lpy - (y1 + dy * t);
+    if (cx * cx + cy * cy < 0.013 * 0.013) return SIL;
+  }
+  {
+    // Tip segment: curls back up toward upper-left.
+    const x1 = -0.075, y1 = -0.175, x2 = -0.115, y2 = -0.140;
+    const dx = x2 - x1, dy = y2 - y1;
+    let t = ((lpx - x1) * dx + (lpy - y1) * dy) / (dx * dx + dy * dy);
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const cx = lpx - (x1 + dx * t), cy = lpy - (y1 + dy * t);
+    if (cx * cx + cy * cy < 0.011 * 0.011) return SIL;
   }
 
   // Saguaro cactus on the right — vertical trunk + two upturned arms
@@ -335,17 +351,19 @@ const cowboyPosterColorFn = (lpx, lpy, lpz) => {
 };
 
 // Pinup Mouse poster — 50s starlet pose. The body is one continuous
-// Y-keyed half-width curve (head → neck → bust → waist → hips → flared
+// Y-keyed half-width curve (head → neck → chest → waist → hips → flared
 // skirt). Pearl necklace, polka-dot dress, cigarette holder with red
 // ember, starburst background.
 const pinupPosterColorFn = (lpx, lpy, lpz) => {
   const halfX = 0.225, halfY = 0.20;
   if (lpz < 0) return [45, 25, 35];
   if (Math.abs(lpx) > halfX - 0.003 || Math.abs(lpy) > halfY - 0.003) return [45, 25, 35];
-  const tearX = Math.sin(lpy * 33) * 0.022;
-  const tearY = Math.sin(lpx * 28) * 0.022;
-  if (Math.abs(lpx) > halfX - 0.025 + tearX) return [28, 16, 22];
-  if (Math.abs(lpy) > halfY - 0.025 + tearY) return [28, 16, 22];
+  // Wavy tear band — narrowed (was 0.025/0.022) so it doesn't eat into the
+  // upper-right corner where the cigarette ember sits.
+  const tearX = Math.sin(lpy * 33) * 0.010;
+  const tearY = Math.sin(lpx * 28) * 0.010;
+  if (Math.abs(lpx) > halfX - 0.013 + tearX) return [28, 16, 22];
+  if (Math.abs(lpy) > halfY - 0.013 + tearY) return [28, 16, 22];
 
   const SIL    = [18, 10, 16];
   const EMBER  = [225, 70, 35];
@@ -370,19 +388,19 @@ const pinupPosterColorFn = (lpx, lpy, lpz) => {
   // down to skirt hem. No overlapping ellipses; the halfW(y) function
   // defines the silhouette outline directly.
   const yNeckTop = 0.060, yNeckBot = 0.040;
-  const yBust    = -0.005;
+  const yChest   = -0.005;
   const yWaist   = -0.045;
   const yHip     = -0.090;
   const ySkirt   = -0.180;
   let bodyHalfW = -1;
   if      (lpy <= yNeckTop && lpy >= yNeckBot) bodyHalfW = 0.013;
-  else if (lpy <  yNeckBot && lpy >= yBust) {
-    const t = (yNeckBot - lpy) / (yNeckBot - yBust);
-    bodyHalfW = 0.013 + 0.045 * t;            // collar → bust 0.058
+  else if (lpy <  yNeckBot && lpy >= yChest) {
+    const t = (yNeckBot - lpy) / (yNeckBot - yChest);
+    bodyHalfW = 0.013 + 0.045 * t;            // collar → chest 0.058
   }
-  else if (lpy <  yBust    && lpy >= yWaist) {
-    const t = (yBust - lpy) / (yBust - yWaist);
-    bodyHalfW = 0.058 - 0.030 * t;            // bust → waist 0.028
+  else if (lpy <  yChest   && lpy >= yWaist) {
+    const t = (yChest - lpy) / (yChest - yWaist);
+    bodyHalfW = 0.058 - 0.030 * t;            // chest → waist 0.028
   }
   else if (lpy <  yWaist   && lpy >= yHip) {
     const t = (yWaist - lpy) / (yWaist - yHip);
@@ -394,7 +412,7 @@ const pinupPosterColorFn = (lpx, lpy, lpz) => {
   }
   if (bodyHalfW > 0 && Math.abs(lpx) < bodyHalfW) {
     // Pearl necklace — sit on the upper chest right below the neck
-    if (lpy < yNeckBot && lpy > yBust + 0.005) {
+    if (lpy < yNeckBot && lpy > yChest + 0.005) {
       for (let i = -2; i <= 2; i++) {
         const px = i * 0.018;
         const py = yNeckBot - 0.012 - 0.004 * Math.abs(i);
@@ -413,17 +431,21 @@ const pinupPosterColorFn = (lpx, lpy, lpz) => {
     return SIL;
   }
 
-  // Cigarette holder — long thin diagonal from face out to upper-right
+  // Cigarette holder — thin diagonal from the face up toward upper-right.
+  // Pulled in from the corner (was ending at 0.19,0.17) so the ember sits
+  // clear of the (now-narrower) tear band, and thinned to half the prior
+  // radius so it reads as a holder rather than a pipe.
   {
-    const x1 = 0.04, y1 = 0.10, x2 = 0.19, y2 = 0.17;
+    const x1 = 0.04, y1 = 0.10, x2 = 0.155, y2 = 0.135;
     const dx = x2 - x1, dy = y2 - y1;
     let t = ((lpx - x1) * dx + (lpy - y1) * dy) / (dx * dx + dy * dy);
     if (t < 0) t = 0; else if (t > 1) t = 1;
     const cx = lpx - (x1 + dx * t), cy = lpy - (y1 + dy * t);
-    if (cx * cx + cy * cy < 0.008 * 0.008) return SIL;
+    if (cx * cx + cy * cy < 0.005 * 0.005) return SIL;
   }
-  // Cigarette ember at the tip
-  if ((lpx - 0.20) * (lpx - 0.20) + (lpy - 0.175) * (lpy - 0.175) < 0.012 * 0.012) return EMBER;
+  // Cigarette ember at the tip — slightly past the holder end, sized up
+  // a hair so it pops as the focal accent.
+  if ((lpx - 0.170) * (lpx - 0.170) + (lpy - 0.143) * (lpy - 0.143) < 0.014 * 0.014) return EMBER;
 
   // Background: dusty rose with a faint starburst from upper-left
   const bx = lpx + 0.20, by = lpy - 0.15;
