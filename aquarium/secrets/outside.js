@@ -25,9 +25,6 @@ import { chamberAirSdf }   from './chamber.js';
 
 export const REGION_OUTSIDE = 'outside';
 
-// Anything past the kitchen front wall (z = +22) is the cove.
-export const isInOutside = (px, py, pz) => pz > +22.0;
-
 
 // ─────────────────────────── geometry ───────────────────────────
 
