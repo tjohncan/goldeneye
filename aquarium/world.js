@@ -25,6 +25,7 @@ import {
 
 import * as bowl      from './zones/bowl.js';
 import * as kitchen   from './zones/kitchen.js';
+import { ROOM_HALF_X, ROOM_HALF_Y, ROOM_HALF_Z } from './zones/kitchen.js';
 import * as mousehole from './secrets/mousehole.js';
 import * as chamber   from './secrets/chamber.js';
 import * as outside   from './secrets/outside.js';
@@ -47,15 +48,6 @@ export const LIGHTING = {
 export const BOWL_INNER_R = 7.3;
 const BOWL_OUTER_R        = 8.5;
 
-// Kitchen interior half-extents — mirrors ROOM_HALF_* in zones/kitchen.js.
-// Used by regionFn to mark only points genuinely inside the kitchen box
-// as kitchen region; anywhere else falls through to outside, so the
-// kitchen 'room' item (whose invertSDF-box material extends to infinity)
-// can't bleed beige walls into the cove.
-const KITCHEN_HALF_X = 22;
-const KITCHEN_HALF_Y = 13;
-const KITCHEN_HALF_Z = 22;
-
 /**
  * Maps a world-space point to a region key. Checks are ordered by
  * specificity: bowl interior first, then each secret zone's predicate,
@@ -75,9 +67,12 @@ const regionFn = (px, py, pz) => {
   }
   if (mousehole.isInMousehole(px, py, pz)) return mousehole.REGION_MOUSEHOLE;
   if (chamber.isInChamber(px, py, pz))     return chamber.REGION_CHAMBER;
-  if (Math.abs(px) < KITCHEN_HALF_X &&
-      Math.abs(py) < KITCHEN_HALF_Y &&
-      Math.abs(pz) < KITCHEN_HALF_Z) {
+  // Kitchen ONLY if inside the room box — anywhere else falls through
+  // to outside, so the kitchen 'room' item (whose invertSDF-box material
+  // extends to infinity) can't bleed beige walls into the cove.
+  if (Math.abs(px) < ROOM_HALF_X &&
+      Math.abs(py) < ROOM_HALF_Y &&
+      Math.abs(pz) < ROOM_HALF_Z) {
     return kitchen.REGION_KITCHEN;
   }
   return outside.REGION_OUTSIDE;
@@ -129,12 +124,14 @@ export const createWorld = () => {
 
   // Per-region items. Order matters: kitchen registers the 'room',
   // 'window', and 'door' items, and the secret zones mutate them in
-  // place to carve their entrances — so kitchen must come first.
+  // place to carve their entrances — so kitchen must come first. The
+  // handles it returns are routed to each secret instead of having the
+  // secrets reach back into the scene by name.
   bowl.addToScene(scene);
-  kitchen.addToScene(scene);
-  mousehole.addToScene(scene);
-  chamber.addToScene(scene);
-  outside.addToScene(scene);
+  const kitchenHandles = kitchen.addToScene(scene);
+  mousehole.addToScene(scene, kitchenHandles);
+  chamber.addToScene(scene, kitchenHandles);
+  outside.addToScene(scene, kitchenHandles);
 
   const speedMul = ([px, py, pz]) => SPEED_MUL_BY_REGION[regionFn(px, py, pz)] ?? 1;
   return { scene, speedMul };

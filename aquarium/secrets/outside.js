@@ -1,16 +1,18 @@
-// aquarium/secrets/outside.js — third secret zone, reached through the
-// keyhole bored through the kitchen front door's brass knob. Inside is
-// a concentric, vastly-larger fishbowl-shaped dome (open-top bowl, like
-// the kitchen's, just huger and centered at the same world origin) — a
-// meta callback: the kitchen we came from is itself one toy inside a
-// much bigger fishbowl. The cove ground is one continuous slope in X:
-// deep underwater far -X, beach at the door's X column, mountains far
-// +X — single-axis ramp, leaving plenty of horizontal room for boats,
-// rocks, roads, etc. in later iterations.
+// aquarium/secrets/outside.js — third secret zone, reached by swimming
+// through the keyhole bored through the kitchen front door (and the
+// brass escutcheon plate around it; the brass knob above the keyhole
+// is a separate decorative sphere). Inside is a concentric, vastly-
+// larger fishbowl-shaped dome (open-top bowl, like the kitchen's, just
+// huger and centered at the same world origin) — a meta callback: the
+// kitchen we came from is itself one toy inside a much bigger
+// fishbowl. The cove ground is one continuous slope in X: lower far
+// -X, beach near the door's X column, mountains far +X — single-axis
+// ramp, leaving plenty of horizontal room for boats, rocks, roads,
+// etc. in later iterations.
 //
-// First-pass architecture: dome shell + linear ground slope + staff
-// shack (the building we exit, with the bore cut through it) + keyhole-
-// through-knob + region veils.
+// First-pass architecture: dome shell + linear ground slope + shack
+// (the building we exit, with the bore cut through it) + keyhole +
+// brass plates + brass knobs + region veils.
 
 import {
   registerItem,
@@ -19,7 +21,12 @@ import {
   translateSDF,
 } from '../../core/scene.js';
 
-import { REGION_KITCHEN } from '../zones/kitchen.js';
+import {
+  REGION_KITCHEN,
+  ROOM_HALF_X as KITCHEN_HALF_X,
+  ROOM_HALF_Y as KITCHEN_HALF_Y,
+  ROOM_HALF_Z as KITCHEN_HALF_Z,
+} from '../zones/kitchen.js';
 import { mouseholeAirSdf } from './mousehole.js';
 import { chamberAirSdf }   from './chamber.js';
 
@@ -46,9 +53,6 @@ const KEYHOLE_Y =   -2;                        // door's vertical center
 //   - chamber back at z=-26.5            → outer-Z must be ≤ -29.38
 //   - kitchen ceiling at y=±13 → wall ≥ 2.88 in Y suffices; bumped to
 //     6 for symmetry and to avoid past top-wall clipping.
-const KITCHEN_HALF_X = 22;
-const KITCHEN_HALF_Y = 13;
-const KITCHEN_HALF_Z = 22;
 const HOUSE_HALF_X   = 31;
 const HOUSE_HALF_Y   = 19;
 const HOUSE_HALF_Z   = 31;
@@ -162,22 +166,29 @@ const DOME_INNER_R =  998;
 const DOME_RIM_Y   = 2000;
 
 // Ground base curve — flat annular plateau around the building (so the
-// staff-shack/marina sits on level land), then linear slope along X
-// outside the plateau (-X drops below water, +X climbs to mountains).
-// Plateau radius is well past the building's outer extent (~40 from
-// origin); the BLEND_R smoothstep avoids a cliff at the plateau edge.
-// More plateaus / terraces can be layered in later.
+// shack sits on level land), then linear slope along X outside the
+// plateau (-X drops away, +X climbs toward mountains). Plateau radius
+// is well past the building's outer extent (~40 from origin); the
+// BLEND_R smoothstep avoids a cliff at the plateau edge. More plateaus
+// / terraces can be layered in later.
 const SLOPE           = 0.6;
-const WATER_LEVEL_Y   = -13;                   // = kitchen floor; door bottom sits at shoreline
+// Y of the plateau where the kitchen building sits, sized so the
+// front-door bottom emerges at ground level on the cove side. Today
+// the cove's rendered shoreline (sand → grass transition) coincides
+// with this plateau height; a future revision might lower sea level
+// below the plateau for a true beach slope. Kept independent from
+// kitchen.FLOOR_Y so the cove can be re-elevated without touching
+// the kitchen.
+const SHACK_PLATEAU_Y = -13;
 const PLATEAU_R       = 60;                    // flat plateau out to here
 const PLATEAU_BLEND_R = 80;                    // slope fully kicked in past here
 const groundHeight = (px, pz) => {
   const r = Math.sqrt(px * px + pz * pz);
-  if (r < PLATEAU_R) return WATER_LEVEL_Y;
-  const slopeY = WATER_LEVEL_Y + SLOPE * (px - DOOR_X);
+  if (r < PLATEAU_R) return SHACK_PLATEAU_Y;
+  const slopeY = SHACK_PLATEAU_Y + SLOPE * (px - DOOR_X);
   const t = Math.min(1, (r - PLATEAU_R) / (PLATEAU_BLEND_R - PLATEAU_R));
   const tSmooth = t * t * (3 - 2 * t);
-  return WATER_LEVEL_Y * (1 - tSmooth) + slopeY * tSmooth;
+  return SHACK_PLATEAU_Y * (1 - tSmooth) + slopeY * tSmooth;
 };
 
 // House exterior — the visible building from the cove. Wraps the entire
@@ -196,7 +207,7 @@ const groundHeight = (px, pz) => {
 // area via the house cut, so no extra geometry needed. X mildly scaled
 // up to match the wider outer wall (inside door X=3.5 → outside 4.5);
 // Y kept close to the inside door's height so the door bottom still
-// sits at the kitchen-floor / plateau line (y=-13).
+// sits at the SHACK_PLATEAU_Y line.
 const OUT_DOOR_X       = +15;
 const OUT_DOOR_Y       =  -1.5;
 const OUT_DOOR_HALF_X  =  4.5;
@@ -278,14 +289,16 @@ const domeColorFn = (lpx, lpy, lpz) => {
   return [r * c, g * c, b * c];
 };
 
-// Ground: deep sand → shallow sand → beach → grass → rock → snow,
-// keyed off world Y (item position is origin so local = world).
+// Ground strata, keyed off world Y relative to the shack plateau:
+// deep tan sand below; lighter sand mid; beach tan right at the
+// plateau line; grass green just above; brown dirt higher; pale gray
+// rock past that.
 const groundColorFn = (lpx, lpy, lpz) => {
-  if (lpy < WATER_LEVEL_Y - 25) return [180, 165, 130];
-  if (lpy < WATER_LEVEL_Y - 10) return [200, 185, 150];
-  if (lpy < WATER_LEVEL_Y)      return [225, 205, 145];
-  if (lpy < WATER_LEVEL_Y + 5)  return [85, 130, 60];
-  if (lpy < WATER_LEVEL_Y + 20) return [115, 100, 75];
+  if (lpy < SHACK_PLATEAU_Y - 25) return [180, 165, 130];
+  if (lpy < SHACK_PLATEAU_Y - 10) return [200, 185, 150];
+  if (lpy < SHACK_PLATEAU_Y)      return [225, 205, 145];
+  if (lpy < SHACK_PLATEAU_Y + 5)  return [85, 130, 60];
+  if (lpy < SHACK_PLATEAU_Y + 20) return [115, 100, 75];
   return [200, 200, 205];
 };
 
@@ -354,12 +367,16 @@ const backWindowColorFn = (lpx, lpy, lpz) => {
 // ─────────────────────────── scene build ───────────────────────────
 
 /**
- * Add the outside zone to the scene. Mutates the kitchen 'door' item
- * to carve the keyhole bore — call after kitchen.addToScene.
+ * Add the outside zone to the scene. Mutates the caller-supplied kitchen
+ * `door` and `room` items to carve the keyhole bore.
  *
  * @param {import('../../core/scene.js').Scene} scene
+ * @param {{
+ *   room: import('../../core/scene.js').Item,
+ *   door: import('../../core/scene.js').Item,
+ * }} kitchen   Handles to kitchen items this zone needs to mutate.
  */
-export const addToScene = (scene) => {
+export const addToScene = (scene, { room: kitchenRoom, door }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_OUTSIDE });
 
   // Carve the keyhole through BOTH the kitchen door AND the kitchen
@@ -373,10 +390,8 @@ export const addToScene = (scene) => {
     const localTool = (lx, ly, lz) => worldToolSdf(lx + px, ly + py, lz + pz);
     item.sdf = cutSDF(localTool, item.sdf);
   };
-  const door = scene.find(it => it.name === 'door');
-  if (door) cutItemWith(door, keyholeBoreWorldSdf);
-  const kitchenRoom = scene.find(it => it.name === 'room');
-  if (kitchenRoom) cutItemWith(kitchenRoom, keyholeBoreWorldSdf);
+  cutItemWith(door,         keyholeBoreWorldSdf);
+  cutItemWith(kitchenRoom,  keyholeBoreWorldSdf);
 
   // Brass escutcheon plates — one each side of the door, with the
   // keyhole shape cut clean through. The plates frame the keyhole with

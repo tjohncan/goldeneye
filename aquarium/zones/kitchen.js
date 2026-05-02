@@ -26,11 +26,14 @@ export const REGION_KITCHEN = 'kitchen';
 
 // Room geometry — used by the room walls, floor and ceiling planes,
 // potlights cluster, and prop placement against walls (window, counter,
-// door, painting).
-const ROOM_HALF_X = 22;
-const ROOM_HALF_Y = 13;
-const ROOM_HALF_Z = 22;
-const FLOOR_Y     = -13;
+// door, painting). Exported because world.js needs the half-extents for
+// its kitchen-region predicate, outside.js needs them for the house-
+// exterior shell sized to surround the kitchen, and mousehole.js needs
+// FLOOR_Y for the entrance tunnel (which sits at the kitchen floor).
+export const ROOM_HALF_X = 22;
+export const ROOM_HALF_Y = 13;
+export const ROOM_HALF_Z = 22;
+export const FLOOR_Y     = -13;
 
 // Runner geometry. Lifted to module scope so runnerColorFn can paint the
 // stitched border + sewn-anchor stamps in the runner's pre-rotation frame.
@@ -233,18 +236,31 @@ const paintingColorFn = (lpx, lpy, lpz) => {
 // ──────────────────────────── scene build ────────────────────────────
 
 /**
- * Add all kitchen-region items to the scene.
+ * Build the kitchen scene. Returns named handles for the three items
+ * the secret zones mutate in place (room walls cut for tunnels/keyholes,
+ * window cut for the chamber pipe, door cut for the keyhole). Threading
+ * these through the call site beats name-string scene.find() — no
+ * silent miss if a name ever changes, and the dependency is explicit.
  *
  * @param {import('../../core/scene.js').Scene} scene
+ * @returns {{
+ *   room:   import('../../core/scene.js').Item,
+ *   door:   import('../../core/scene.js').Item,
+ *   window: import('../../core/scene.js').Item,
+ * }}
  */
 export const addToScene = (scene) => {
-  const add = (item) => registerItem(scene, { ...item, regionKey: REGION_KITCHEN });
+  const add = (item) => {
+    const tagged = { ...item, regionKey: REGION_KITCHEN };
+    registerItem(scene, tagged);
+    return tagged;
+  };
 
   // ─────────── structural ───────────
 
   // Room — inverted box; material exists outside the box, so the air
   // inside is the kitchen. Large/infinite, no boundingRadius.
-  add({
+  const room = add({
     name:     'room',
     color:    [232, 218, 188],
     colorFn:  roomColorFn,
@@ -419,7 +435,7 @@ export const addToScene = (scene) => {
   // Window + sill — single Item; the sill is a translated sub-box in
   // window-local coords (down by 4.3 in Y, forward by 0.55 in Z), and
   // windowColorFn returns brown for lpy < -4 to render it as wood frame.
-  add({
+  const windowItem = add({
     name:     'window',
     color:    [150, 200, 240],
     colorFn:  windowColorFn,
@@ -463,7 +479,7 @@ export const addToScene = (scene) => {
   // Closed door on the OPPOSITE wall (front wall, +Z=22). Wider than the
   // fridge so it reads as a person-sized door. The keyhole bore +
   // brass knob get added in secrets/outside.js.
-  add({
+  const door = add({
     name:     'door',
     color:    [120, 80, 50],
     colorFn:  doorColorFn,
@@ -480,4 +496,6 @@ export const addToScene = (scene) => {
     sdf:      boxSDF([3, 2.5, 0.05]),
     boundingRadius: 4,
   });
+
+  return { room, door, window: windowItem };
 };

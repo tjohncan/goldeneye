@@ -1,10 +1,14 @@
 // aquarium/secrets/chamber.js — abstract showcase zone reached by
-// swimming INTO the painted sun on the kitchen window. A yellow pipe
-// punches through the window glass, a torus tunnel wraps behind the
+// swimming INTO the painted sun on the kitchen window. An entry pipe
+// is carved through the window at the painted-sun location (a thin
+// yellow sun-cover hides the carve from kitchen rays so it still
+// reads as a regular painted sun), a torus tunnel wraps behind the
 // wall (two paths CW or CCW around the donut, both connecting the
 // pipe at the top to the chamber at the bottom), and the chamber
 // itself drops realism — gyroid centerpiece + scrolling marquee on
-// the back wall.
+// the back wall. Pipe and tube interiors paint as the surrounding
+// wall material on each side of the region boundary (kitchen-beige
+// near +Z, chamber-purple past it).
 //
 // Region wiring: items registered here carry `regionKey: 'chamber'`.
 // `isInChamber(p)` is exported for world.js's regionFn.
@@ -22,6 +26,7 @@ import {
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../core/scene.js';
 import { frameTime } from '../../core/tracer.js';
+import { REGION_KITCHEN } from '../zones/kitchen.js';
 
 export const REGION_CHAMBER = 'chamber';
 
@@ -53,9 +58,11 @@ const SUN_Y = 4.2;
 
 const KITCHEN_BACK_WALL_Z = -22.0;
 
-// Entry pipe — yellow tube. Outer + inner radius give a thin shell with
+// Entry pipe geometry. Outer + inner radius give a thin shell with
 // generous interior clearance for the fish (inner radius - fishRadius
-// = 0.42 - 0.20 = 0.22).
+// = 0.42 - 0.20 = 0.22). The pipe itself isn't a separate item — it's
+// an air-volume cut from the kitchen-room and chamber-room shells, so
+// its visible color comes from whichever shell's wall the ray hits.
 const PIPE_R_OUTER       = 0.45;
 const PIPE_R_INNER       = 0.42;
 const PIPE_Z_KITCHEN_END = -21.5;            // 0.5 inside the kitchen
@@ -314,13 +321,17 @@ const gyroidColorFn = (lpx, lpy, lpz) => {
 // ─────────────────────────── scene build ───────────────────────────
 
 /**
- * Add the chamber zone to the scene. Mutates the kitchen 'room' AND
- * 'window' items in place to carve the entry pipe through the back
- * wall and through the painted-sun area of the window.
+ * Add the chamber zone to the scene. Mutates the caller-supplied kitchen
+ * `room` AND `window` items in place to carve the entry pipe through the
+ * back wall and through the painted-sun area of the window.
  *
  * @param {import('../../core/scene.js').Scene} scene
+ * @param {{
+ *   room:   import('../../core/scene.js').Item,
+ *   window: import('../../core/scene.js').Item,
+ * }} kitchen   Handles to kitchen items this zone needs to mutate.
  */
-export const addToScene = (scene) => {
+export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_CHAMBER });
 
   // Carve the entry pipe through the kitchen room (so the kitchen-side
@@ -339,10 +350,8 @@ export const addToScene = (scene) => {
     const oldSdf = item.sdf;
     item.sdf = cutSDF(localTool, oldSdf);
   };
-  const kitchenRoom = scene.find(it => it.name === 'room');
-  if (kitchenRoom)   cutItemWith(kitchenRoom,   pipeVolumeWorldSdf);
-  const kitchenWindow = scene.find(it => it.name === 'window');
-  if (kitchenWindow) cutItemWith(kitchenWindow, pipeVolumeWorldSdf);
+  cutItemWith(kitchenRoom,   pipeVolumeWorldSdf);
+  cutItemWith(kitchenWindow, pipeVolumeWorldSdf);
 
   // Chamber-room shell — material everywhere except in the chamber
   // box, the torus tube, and the entry pipe. Paints chamber walls.
@@ -399,8 +408,8 @@ export const addToScene = (scene) => {
   // Sun cover — a thin opaque disk parked just in front of the carved
   // window at the painted-sun location. Hides the tube interior from
   // kitchen rays so the secret reads as a regular painted sun. Fish
-  // swims through (collides:false). Spanning so kitchen rays consider
-  // it (no regionKey).
+  // swims through (collides:false). Sits inside the kitchen box (z =
+  // KITCHEN_BACK_WALL_Z + 0.15), so it lives in the kitchen region.
   registerItem(scene, {
     name:     'chamber-sun-cover',
     color:    [255, 235, 120],                // matches windowColorFn's painted sun core
@@ -408,5 +417,6 @@ export const addToScene = (scene) => {
     sdf:      rotateXSDF(Math.PI / 2, cylinderSDF(0.005, 0.55)),
     collides: false,
     boundingRadius: 0.56,
+    regionKey: REGION_KITCHEN,
   });
 };

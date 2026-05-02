@@ -3,11 +3,13 @@
 // shaped arch in the left wall (x = -22) near the front (z ≈ +21).
 //
 // The interior is small but navigable: ~3 wide × 2.5 tall × 3 deep. Vibe:
-// filthy bachelor cave. A messy unmade bed in the corner with a half-eaten
-// pizza slice abandoned on top, a small TV against the back wall flickering
-// rolling static, and a thin spider web in the upper corner. Walls and
-// floor are painted dingy brown — no engine lighting change, just a darker
-// colorFn palette than the kitchen's roomColorFn.
+// bachelor cave. A messy unmade bed in the corner, a small TV against
+// the back wall flickering rolling static, posters and webs in the
+// upper corners. The connecting tunnel is warm brown (matches kitchen-
+// wall coloring so the hand-off reads as continuous), and the apartment
+// interior is dirty blue-gray with peeling-wallpaper accents — a darker
+// palette than the kitchen's roomColorFn, sold by colorFn alone (no
+// engine lighting change).
 //
 // Region wiring: items registered here carry `regionKey: 'mousehole'`.
 // `isInMousehole(p)` is exported for world.js's regionFn to chain.
@@ -26,6 +28,7 @@ import {
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../core/scene.js';
 import { frameTime } from '../../core/tracer.js';
+import { FLOOR_Y } from '../zones/kitchen.js';
 
 export const REGION_MOUSEHOLE = 'mousehole';
 
@@ -49,7 +52,7 @@ export const isInMousehole = (px, py, pz) =>
 
 // Entrance silhouette in the YZ plane (the wall is the X = -22 plane).
 // Tombstone: a rectangular bottom + a half-cylindrical cap.
-const ENTRANCE_FLOOR_Y    = -13;       // = kitchen floor
+const ENTRANCE_FLOOR_Y    = FLOOR_Y;   // tunnel sits flush with the kitchen floor
 const ENTRANCE_RECT_TOP_Y = -12.4;     // top of the rectangular bottom
 const ENTRANCE_CAP_R      = 0.4;       // half-circle cap radius (= half width)
 const ENTRANCE_CENTER_Z   = +20.9;     // close to the front-left corner (front wall at z=+22)
@@ -350,11 +353,11 @@ const cowboyPosterColorFn = (lpx, lpy, lpz) => {
   return [200 - 65 * skyT, 150 - 65 * skyT, 90 - 40 * skyT];
 };
 
-// Pinup Mouse poster — 50s starlet pose. The body is one continuous
+// Starlet Mouse poster — 50s Hollywood-glamour pose. The body is one continuous
 // Y-keyed half-width curve (head → neck → chest → waist → hips → flared
 // skirt). Pearl necklace, polka-dot dress, cigarette holder with red
 // ember, starburst background.
-const pinupPosterColorFn = (lpx, lpy, lpz) => {
+const starletPosterColorFn = (lpx, lpy, lpz) => {
   const halfX = 0.225, halfY = 0.20;
   if (lpz < 0) return [45, 25, 35];
   if (Math.abs(lpx) > halfX - 0.003 || Math.abs(lpy) > halfY - 0.003) return [45, 25, 35];
@@ -460,12 +463,14 @@ const pinupPosterColorFn = (lpx, lpy, lpz) => {
 // ──────────────────────────── scene build ────────────────────────────
 
 /**
- * Add the mousehole zone to the scene. Mutates the kitchen 'room' item
- * to carve the entrance tunnel; appends mousehole-region items.
+ * Add the mousehole zone to the scene. Mutates the caller-supplied kitchen
+ * `room` item to carve the entrance tunnel; appends mousehole-region items.
  *
  * @param {import('../../core/scene.js').Scene} scene
+ * @param {{ room: import('../../core/scene.js').Item }} kitchen
+ *        Handles to kitchen items this zone needs to mutate.
  */
-export const addToScene = (scene) => {
+export const addToScene = (scene, { room: kitchenRoom }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_MOUSEHOLE });
 
   // Carve the entrance tunnel through the kitchen room's wall material,
@@ -473,21 +478,18 @@ export const addToScene = (scene) => {
   // as tunnel-brown (matching the mousehole-side) instead of kitchen
   // beige. Without the colorFn override the player would see beige
   // walls just inside the entrance and brown walls deeper in — discontinuous.
-  const kitchenRoom = scene.find(it => it.name === 'room');
-  if (kitchenRoom) {
-    const oldSdf = kitchenRoom.sdf;
-    kitchenRoom.sdf = cutSDF(tunnelSdf, oldSdf);
-    const oldColorFn = kitchenRoom.colorFn;
-    kitchenRoom.colorFn = (lpx, lpy, lpz) => {
-      // If we're hitting a tunnel-silhouette wall on the kitchen side,
-      // paint it the same brown as the mousehole-side tunnel walls.
-      if (lpx >= -22 && lpx <= TUNNEL_KITCHEN_END_X && tunnelSdf(lpx, lpy, lpz) < 0.03) {
-        if (lpy < INTERIOR_FLOOR_Y + 0.12) return [40, 32, 25];
-        return [70, 55, 40];
-      }
-      return oldColorFn ? oldColorFn(lpx, lpy, lpz) : [232, 218, 188];
-    };
-  }
+  const oldSdf = kitchenRoom.sdf;
+  kitchenRoom.sdf = cutSDF(tunnelSdf, oldSdf);
+  const oldColorFn = kitchenRoom.colorFn;
+  kitchenRoom.colorFn = (lpx, lpy, lpz) => {
+    // If we're hitting a tunnel-silhouette wall on the kitchen side,
+    // paint it the same brown as the mousehole-side tunnel walls.
+    if (lpx >= -22 && lpx <= TUNNEL_KITCHEN_END_X && tunnelSdf(lpx, lpy, lpz) < 0.03) {
+      if (lpy < INTERIOR_FLOOR_Y + 0.12) return [40, 32, 25];
+      return [70, 55, 40];
+    }
+    return oldColorFn ? oldColorFn(lpx, lpy, lpz) : [232, 218, 188];
+  };
 
   // The shell of the secret room. No boundingRadius — always considered
   // once we're in the mousehole region.
@@ -721,9 +723,9 @@ export const addToScene = (scene) => {
     boundingRadius: Math.hypot(POSTER_HALF[0], POSTER_HALF[1], POSTER_HALF[2]) + 0.02,
   });
   add({
-    name:     'mousehole-poster-pinup',
+    name:     'mousehole-poster-starlet',
     color:    [185, 115, 135],
-    colorFn:  pinupPosterColorFn,
+    colorFn:  starletPosterColorFn,
     position: [-26.0, POSTER_Y, POSTER_Z],
     sdf:      boxSDF(POSTER_HALF),
     boundingRadius: Math.hypot(POSTER_HALF[0], POSTER_HALF[1], POSTER_HALF[2]) + 0.02,
@@ -833,9 +835,10 @@ export const addToScene = (scene) => {
   // a small 0.1-unit gap at each end where the carpet's hem ends and the
   // bare floor begins.
   //
-  // Spans both regions (kitchen-side and mousehole-side of the tunnel)
-  // so it has no regionKey; the bounding radius keeps it cheap.
-  // collides:false so the fish doesn't bump a 1cm-thick lip.
+  // Carpet sits entirely inside the mousehole region per isInMousehole
+  // (its +X end at -22.1 is just past the kitchen-box wall at x=-22, so
+  // every point on the carpet is mousehole). collides:false so the fish
+  // doesn't bump a 1cm-thick lip.
   const CARPET_X_START = INTERIOR_FRONT_X + 0.1;     // = -25.1, just inside tunnel from apartment side
   const CARPET_X_END   = -22.1;                      // 0.1 inside tunnel from kitchen side
   const CARPET_HALF_X  = (CARPET_X_END - CARPET_X_START) / 2;
@@ -848,5 +851,6 @@ export const addToScene = (scene) => {
     sdf:      boxSDF([CARPET_HALF_X, 0.005, CARPET_HALF_Z]),
     collides: false,
     boundingRadius: Math.hypot(CARPET_HALF_X, 0.005, CARPET_HALF_Z) + 0.02,
+    regionKey: REGION_MOUSEHOLE,
   });
 };

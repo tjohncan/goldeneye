@@ -1,6 +1,6 @@
 // aquarium/zones/bowl.js — items inside the open-topped fishbowl: sand,
 // rocks, plants, the half-buried chest, and the multi-part pirate ship
-// with anatomical mermaid figurehead. Every item registered here carries
+// with carved mermaid figurehead. Every item registered here carries
 // `regionKey: 'bowl'` so the tracer's per-step region filter and physics's
 // per-iteration region cull skip them when the camera and probes are
 // outside the bowl.
