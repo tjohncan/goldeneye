@@ -22,7 +22,7 @@ import {
   translateSDF, rotateXSDF, rotateYSDF,
 } from '../../core/scene.js';
 
-import { REGION_KITCHEN } from '../world.js';
+export const REGION_KITCHEN = 'kitchen';
 
 // Room geometry — used by the room walls, floor and ceiling planes,
 // potlights cluster, and prop placement against walls (window, counter,

@@ -12,7 +12,9 @@ import {
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../core/scene.js';
 
-import { BOWL_INNER_R, REGION_BOWL } from '../world.js';
+import { BOWL_INNER_R } from '../world.js';
+
+export const REGION_BOWL = 'bowl';
 
 const SAND_Y = -1.5;
 
@@ -289,17 +291,17 @@ export const addToScene = (scene) => {
     boundingRadius: 3,
   });
 
-  const mermaidBra = translateSDF([0, 0, MERMAID_OFFSET_Z],
+  const mermaidTop = translateSDF([0, 0, MERMAID_OFFSET_Z],
     unionSDF(
       translateSDF([+0.06, 0.245, 0.22], sphereSDF(0.0515)),
       translateSDF([-0.06, 0.245, 0.22], sphereSDF(0.0515)),
     ),
   );
   add({
-    name:     'mermaid-bra',
+    name:     'mermaid-top',
     color:    [240, 220, 175],
     position: SHIP_POS,
-    sdf:      shipFrame(mermaidBra),
+    sdf:      shipFrame(mermaidTop),
     boundingRadius: 3,
   });
 };
