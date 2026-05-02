@@ -56,11 +56,6 @@ const KITCHEN_HALF_X = 22;
 const KITCHEN_HALF_Y = 13;
 const KITCHEN_HALF_Z = 22;
 
-// Region keys — exported for zone modules to tag their items, and consumed
-// by regionFn below.
-export const REGION_BOWL    = 'bowl';
-export const REGION_KITCHEN = 'kitchen';
-
 /**
  * Maps a world-space point to a region key. Checks are ordered by
  * specificity: bowl interior first, then each secret zone's predicate,
@@ -76,14 +71,14 @@ export const REGION_KITCHEN = 'kitchen';
 const regionFn = (px, py, pz) => {
   if (py < WATER_SURFACE_Y &&
       px * px + py * py + pz * pz < BOWL_INNER_R * BOWL_INNER_R) {
-    return REGION_BOWL;
+    return bowl.REGION_BOWL;
   }
   if (mousehole.isInMousehole(px, py, pz)) return mousehole.REGION_MOUSEHOLE;
   if (chamber.isInChamber(px, py, pz))     return chamber.REGION_CHAMBER;
   if (Math.abs(px) < KITCHEN_HALF_X &&
       Math.abs(py) < KITCHEN_HALF_Y &&
       Math.abs(pz) < KITCHEN_HALF_Z) {
-    return REGION_KITCHEN;
+    return kitchen.REGION_KITCHEN;
   }
   return outside.REGION_OUTSIDE;
 };
