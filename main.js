@@ -1,6 +1,7 @@
 import { Camera, disk } from './core/camera.js';
 import { Painter }      from './core/painter.js';
 import { trace }        from './core/tracer.js';
+import { quatLookAt }   from './core/r3.js';
 
 import { createWorld, LIGHTING, WATER_SURFACE_Y } from './aquarium/world.js';
 import { bindControls }     from './aquarium/controls.js';
@@ -13,6 +14,16 @@ const SCREEN_H    = 64;
 const LENS_POINTS = 6400;
 const MAX_FPS     = 13;
 
+// Spawn pose. Position inside the bowl, off-center; looking at the
+// bowl's center origin — picks up sand, plants, the ship, and the
+// surrounding kitchen through the translucent bowl glass. SPAWN_UP is
+// a hint that pins the camera's roll: world-up here, so the horizon
+// reads level. (Camera orientation defaults to identity if a project
+// doesn't set one — quatLookAt is opt-in.)
+const SPAWN_POSITION = [-4, 0, 4];
+const SPAWN_LOOK_AT  = [0, 0, -7];
+const SPAWN_UP       = [0, 1, 0];
+
 const lens = disk({ points: LENS_POINTS });
 const camera = new Camera({ lens, screenW: SCREEN_W, screenH: SCREEN_H });
 const painter = new Painter({
@@ -23,7 +34,8 @@ const painter = new Painter({
 });
 const { scene, speedMul } = createWorld();
 
-camera.position = [-4, 0, 4];
+camera.position    = SPAWN_POSITION;
+camera.orientation = quatLookAt(SPAWN_POSITION, SPAWN_LOOK_AT, SPAWN_UP);
 
 const controls = bindControls({
   host: document.getElementById('screen-wrap'),
