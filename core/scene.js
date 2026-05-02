@@ -294,11 +294,20 @@ export const rotateZSDF = (theta, sdf) => {
 
 // ─────────────────────────── differential ops ───────────────────────────
 
+/** Module-level scratch buffer for sdfGrad's return value — reused across
+ *  calls so the hot loop doesn't allocate a fresh [gx, gy, gz] per hit.
+ *  Callers must consume (typically destructure) before the next sdfGrad
+ *  call. JS is single-threaded and tracer/physics use it synchronously. */
+const _gradOut = [0, 0, 0];
+
 /**
  * Forward finite-difference gradient of an SDF at a local-space point. Caller
  * supplies the precomputed center distance so the helper does only 3 SDF
  * evaluations instead of 4. Returns the unnormalized gradient vector — caller
  * normalizes if needed.
+ *
+ * The returned Vec3 is a shared module-level buffer; consume before the next
+ * sdfGrad call.
  *
  * @param {SDF} sdf
  * @param {number} lpx        item-local x
@@ -308,8 +317,9 @@ export const rotateZSDF = (theta, sdf) => {
  * @param {number} eps        finite-difference step size
  * @returns {Vec3}            [gx, gy, gz]
  */
-export const sdfGrad = (sdf, lpx, lpy, lpz, centerD, eps) => [
-  sdf(lpx + eps, lpy, lpz) - centerD,
-  sdf(lpx, lpy + eps, lpz) - centerD,
-  sdf(lpx, lpy, lpz + eps) - centerD,
-];
+export const sdfGrad = (sdf, lpx, lpy, lpz, centerD, eps) => {
+  _gradOut[0] = sdf(lpx + eps, lpy, lpz) - centerD;
+  _gradOut[1] = sdf(lpx, lpy + eps, lpz) - centerD;
+  _gradOut[2] = sdf(lpx, lpy, lpz + eps) - centerD;
+  return _gradOut;
+};
