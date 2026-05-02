@@ -19,7 +19,7 @@ import {
   translateSDF,
 } from '../../core/scene.js';
 
-import { REGION_KITCHEN } from '../world.js';
+import { REGION_KITCHEN } from '../zones/kitchen.js';
 import { mouseholeAirSdf } from './mousehole.js';
 import { chamberAirSdf }   from './chamber.js';
 

@@ -12,7 +12,7 @@
 // of the way (visibility off) when it reaches the surface.
 
 import { sphereSDF, registerItem } from '../core/scene.js';
-import { REGION_BOWL } from './world.js';
+import { REGION_BOWL } from './zones/bowl.js';
 
 /** @typedef {import('../core/r3.js').Vec3} Vec3 */
 /** @typedef {import('../core/scene.js').Scene} Scene */
