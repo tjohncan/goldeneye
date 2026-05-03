@@ -375,7 +375,7 @@ export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) 
     colorFn:  chamberGlowColorFn,
     position: [SUN_X, SUN_Y, CHAMBER_CENTER_Z],
     sdf:      boxSDF([CHAMBER_HALF_X, CHAMBER_HALF_Y, CHAMBER_HALF_Z]),
-    opacity:  0.10,
+    opacity:  0.20,
     collides: false,
   });
 
@@ -408,8 +408,13 @@ export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) 
   // Sun cover — a thin opaque disk parked just in front of the carved
   // window at the painted-sun location. Hides the tube interior from
   // kitchen rays so the secret reads as a regular painted sun. Fish
-  // swims through (collides:false). Sits inside the kitchen box (z =
-  // KITCHEN_BACK_WALL_Z + 0.15), so it lives in the kitchen region.
+  // swims through (collides:false). Registered to BOTH the chamber and
+  // kitchen regions: the disk geometrically sits inside the kitchen box,
+  // but chamber rays approaching it via the entry pipe must consider it
+  // too — otherwise the per-step cull drops it during chamber-region
+  // steps and the marcher's nearestD ignores it, letting a single step
+  // leap past the 0.01-thick disk and the ray sees through to kitchen
+  // items behind it instead of terminating on the cover.
   registerItem(scene, {
     name:     'chamber-sun-cover',
     color:    [255, 235, 120],                // matches windowColorFn's painted sun core
@@ -417,6 +422,6 @@ export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) 
     sdf:      rotateXSDF(Math.PI / 2, cylinderSDF(0.005, 0.55)),
     collides: false,
     boundingRadius: 0.56,
-    regionKey: REGION_KITCHEN,
+    regionKey: [REGION_CHAMBER, REGION_KITCHEN],
   });
 };

@@ -512,7 +512,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     colorFn:  roomGlowColorFn,
     position: [INTERIOR_CENTER_X, INTERIOR_CENTER_Y, INTERIOR_CENTER_Z],
     sdf:      boxSDF([INTERIOR_HALF_X, INTERIOR_HALF_Y, INTERIOR_HALF_Z]),
-    opacity:  0.10,
+    opacity:  0.20,
     collides: false,
   });
 
