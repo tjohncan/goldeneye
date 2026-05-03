@@ -3,7 +3,7 @@ import { Painter }      from './core/painter.js';
 import { trace }        from './core/tracer.js';
 import { quatLookAt }   from './core/r3.js';
 
-import { createWorld, LIGHTING, WATER_SURFACE_Y } from './aquarium/world.js';
+import { createWorld, LIGHTING, WATER_SURFACE_Y, SUN_TRIGGER_Y } from './aquarium/world.js';
 import { bindControls }     from './aquarium/controls.js';
 import { bindPhysics }      from './aquarium/physics.js';
 import { createBubblePump } from './aquarium/bubblePump.js';
@@ -23,6 +23,10 @@ const MAX_FPS     = 13;
 const SPAWN_POSITION = [-4, 0, 4];
 const SPAWN_LOOK_AT  = [0, 0, -7];
 const SPAWN_UP       = [0, 1, 0];
+
+const TELEPORT_POSITION = [10.5, 4.2, -25.4];
+const TELEPORT_LOOK_AT  = [10.5, 4.2, -26.5];
+const TELEPORT_UP       = [0, 1, 0];
 
 const lens = disk({ points: LENS_POINTS });
 const camera = new Camera({ lens, screenW: SCREEN_W, screenH: SCREEN_H });
@@ -55,6 +59,20 @@ const bubblePump = createBubblePump({
 const tick = throttle(MAX_FPS, (timeMs) => {
   controls.update(timeMs);
   physics.update();
+
+  // Sun teleport — flying high enough into the cove sun warps the
+  // camera into the chamber (TELEPORT_POSITION). Sits AFTER physics
+  // (sees post-collision Y) and BEFORE trace (teleport reflected in
+  // this frame's render, no flash of the pre-teleport view). Pure Y
+  // check rather than sphere containment: the cove's other regions
+  // all live well below this height, so a single threshold can't
+  // false-fire from indoors.
+  if (camera.position[1] > SUN_TRIGGER_Y) {
+    camera.position    = TELEPORT_POSITION;
+    camera.orientation = quatLookAt(TELEPORT_POSITION, TELEPORT_LOOK_AT, TELEPORT_UP);
+    controls.suspend(500);
+  }
+
   bubblePump.update(timeMs);
 
   const colors = trace(camera.rays(), scene, LIGHTING);
