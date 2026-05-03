@@ -36,12 +36,62 @@ export const WATER_SURFACE_Y = 6.25;
 /** Lighting: sun straight up, gentle ambient. Background is black —
  * silhouette-edge rays that exhaust MAX_STEPS without fully accumulating
  * opacity mix toward background, so coloring it non-black bleeds into
- * edges everywhere. */
+ * edges everywhere.
+ *
+ * `byRegion` overrides the base — see Lighting typedef in core/tracer.js.
+ * Two granularities for that lookup:
+ *   - maxDist: per-trace, keyed by the ray origin's region (a ray-distance
+ *     cap can't sensibly vary mid-march). Used to give cove rays the long
+ *     cap they need for the dome at radius 1000 without paying for it
+ *     elsewhere.
+ *   - lightDir + ambient: per-HIT, keyed by the hit point's region. So a
+ *     kitchen surface stays sun-up-lit even when the camera is in the
+ *     mousehole looking back through the tunnel; only surfaces inside the
+ *     secret zone pick up its alternative light direction. Avoids the
+ *     portal-flip artifact that origin-region shading would produce.
+ *
+ * The bowl region intentionally inherits base — fish-in-water under the
+ * kitchen's overhead sun is the right read; no override needed.
+ */
 export const LIGHTING = {
   lightDir:   [0, 1, 0],
   ambient:    0.35,
   background: [0, 0, 0],
-  maxDist:    10000,
+  // Self-derived cap: full kitchen diagonal (corner-to-corner) plus a
+  // 30-unit buffer. Covers any legitimate kitchen/bowl/mousehole/chamber
+  // ray (the outside-keyhole peek is blocked by the door veil so kitchen
+  // rays never reach the cove). If kitchen extents ever change, this
+  // tracks them. Outside overrides up to reach the dome.
+  maxDist:    Math.hypot(ROOM_HALF_X, ROOM_HALF_Y, ROOM_HALF_Z) * 2 + 30,
+  byRegion: {
+    [outside.REGION_OUTSIDE]: {
+      // Cove dome at radius 1000 — needs the long ray cap to render
+      // its sky gradient through to the equator.
+      maxDist: 10000,
+    },
+    [mousehole.REGION_MOUSEHOLE]: {
+      // Light comes from the +X side (the doorway and TV are both
+      // there). Surfaces with normals pointing +X — i.e., the back
+      // wall opposite the entrance — catch the light, mimicking how
+      // a TV in a dark room throws its glow on the far wall while
+      // its own face stays in silhouette. Ambient kept moderate so
+      // the lit-vs-unlit disparity reads as atmosphere, not blackout;
+      // the room-glow translucent box (mousehole.js) carries the
+      // additional blue-cathode wash on top.
+      lightDir: [1, 0, 0],
+      ambient:  0.30,
+    },
+    [chamber.REGION_CHAMBER]: {
+      // Light comes from the back wall (-Z side, where the marquee
+      // sits). The opposite +Z wall (front, near the entry pipe)
+      // catches the light; the marquee wall itself stays dim apart
+      // from its own glowing colorFn — reads as "the marquee IS the
+      // light source." Ambient moderate for atmosphere; the chamber-
+      // glow box adds the psychedelic wash.
+      lightDir: [0, 0, -1],
+      ambient:  0.30,
+    },
+  },
 };
 
 // Bowl geometry. BOWL_INNER_R is also imported by zones/bowl.js (sand SDF).
@@ -111,8 +161,10 @@ export const createWorld = () => {
   const scene = createScene();
   scene.regionFn = regionFn;
 
-  // Fishbowl glass — visible from inside (bowl rays) AND from outside
-  // (kitchen rays), so genuinely region-spanning. No regionKey.
+  // Fishbowl glass — registered to BOTH bowl and kitchen so per-step
+  // cull keeps it for rays in either region (translucent: visible from
+  // inside the bowl AND from kitchen looking at the bowl from outside),
+  // and drops it for unrelated regions (mousehole/chamber/outside).
   registerItem(scene, {
     name:     'fishbowl',
     color:    [40, 55, 85],
@@ -120,6 +172,7 @@ export const createWorld = () => {
     sdf:      openTopBowlSDF({ outerR: BOWL_OUTER_R, innerR: BOWL_INNER_R, rimY: WATER_SURFACE_Y }),
     opacity:  0.75,
     boundingRadius: BOWL_OUTER_R + 0.2,
+    regionKey: [bowl.REGION_BOWL, kitchen.REGION_KITCHEN],
   });
 
   // Per-region items. Order matters: kitchen registers the 'room',
