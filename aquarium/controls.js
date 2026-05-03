@@ -46,7 +46,7 @@ const applyDeadzone = (v, dz) => {
  *                             // speed in larger regions (e.g. the outside cove)
  *                             // without rewriting locomotion. Default: 1.
  * }} opts
- * @returns {{ update: (timeMs: number) => void, destroy: () => void }}
+ * @returns {{ update: (timeMs: number) => void, suspend: (durationMs: number) => void, destroy: () => void }}
  */
 export const bindControls = ({
   host,
@@ -67,6 +67,12 @@ export const bindControls = ({
   let velFwd   = 0;
   let velYaw   = 0;
   let velPitch = 0;
+
+  // Timestamp (performance.now() ms) until which input is ignored. Set
+  // by suspend() to give a brief lockout window after a caller-driven
+  // event (e.g. a teleport) so the user's still-held button doesn't
+  // immediately re-launch the camera.
+  let suspendedUntil = 0;
 
   const onDown = (e) => {
     pointers.set(e.pointerId, {
@@ -102,7 +108,13 @@ export const bindControls = ({
       lastTime = timeMs;
       if (dt <= 0) return;
 
-      if (pointers.size > 0) {
+      if (timeMs < suspendedUntil) {
+        // Suspended — zero velocities so the camera is moved only by
+        // physics during the lockout. Pointer events keep being
+        // tracked, so once the window expires the user's current
+        // input applies immediately on the next tick.
+        velFwd = velYaw = velPitch = 0;
+      } else if (pointers.size > 0) {
         const rect = host.getBoundingClientRect();
         const cx = rect.left + rect.width  / 2;
         const cy = rect.top  + rect.height / 2;
@@ -158,6 +170,9 @@ export const bindControls = ({
         const forward = r3.quatRotate(camera.orientation, [0, 0, -1]);
         camera.position = r3.add(camera.position, r3.scale(forward, velFwd * dt));
       }
+    },
+    suspend(durationMs) {
+      suspendedUntil = performance.now() + durationMs;
     },
     destroy() {
       window.removeEventListener('pointerdown',   onDown);
