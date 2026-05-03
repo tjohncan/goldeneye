@@ -58,13 +58,30 @@
  */
 
 /**
- * Scenes are arrays of Items. They may optionally carry a `regionFn`
- * property: a function mapping a world-space point to a region key. When
- * present, the tracer skips items whose `regionKey` doesn't match the
- * current ray-step point's region. If `regionFn` is absent, no region
- * filtering happens and `regionKey` on items is ignored.
+ * Scenes are arrays of Items. They may optionally carry two region
+ * helpers, both consulted by the tracer when present:
  *
- * @typedef {Item[] & { regionFn?: (px: number, py: number, pz: number) => (RegionKey | null) }} Scene
+ *   - `regionFn`: maps a world-space point to a region key. Used by the
+ *     tracer's per-step cull: items whose regionKey doesn't match the
+ *     current ray-step point's region are skipped during marching.
+ *
+ *   - `visibleRegions`: declares which regions a ray ORIGINATING in a
+ *     given region can possibly reach. The tracer uses it to pre-cull
+ *     items whose region is unreachable from the camera, before the
+ *     per-ray bounding-sphere filter — saves iterations in scenes with
+ *     isolated zones (e.g., a fully sealed outdoor area). Items with an
+ *     array regionKey pass if ANY key is in the camera region's
+ *     visible set. Items without a regionKey always pass. The camera's
+ *     own region must be listed explicitly in its entry's array.
+ *
+ * If `regionFn` is absent, both `regionKey` and `visibleRegions` are
+ * ignored (full scene considered for every ray). If `visibleRegions` is
+ * absent but `regionFn` is present, only the per-step cull runs.
+ *
+ * @typedef {Item[] & {
+ *   regionFn?:       (px: number, py: number, pz: number) => (RegionKey | null),
+ *   visibleRegions?: Record<string, RegionKey[]>,
+ * }} Scene
  */
 
 /** @returns {Scene} */
