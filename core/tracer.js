@@ -54,11 +54,14 @@ import { sdfGrad } from './scene.js';
  *                        // largest dimension exceeds the default (e.g. a very
  *                        // large bounding shell that rays need to traverse).
  *   byRegion?:  Record<string, LightingPartial>,
- *                        // optional per-region overrides. Each entry merges
- *                        // over the base lighting for rays whose ORIGIN
- *                        // region matches the key. Lookup is per-trace
- *                        // (all rays share an origin), so the cost is one
- *                        // regionFn call per frame. Requires scene.regionFn;
+ *                        // optional per-region overrides applied at two
+ *                        // granularities: maxDist is per-trace, keyed by
+ *                        // the ray origin's region (a ray-distance cap
+ *                        // can't sensibly vary mid-march); lightDir +
+ *                        // ambient are per-hit, keyed by the hit point's
+ *                        // region (so shading tracks the surface's space,
+ *                        // not the camera's, and stays continuous across
+ *                        // region boundaries). Requires scene.regionFn;
  *                        // ignored otherwise. Keys without an entry fall
  *                        // through to the base lighting.
  * }} Lighting
@@ -83,6 +86,14 @@ const DEFAULT_LIGHTING = {
 
 /** Output Float32Array, length 3 × max ever lens count. Lazily grown. */
 let _outBuffer = null;
+
+/** Per-trace pre-cull buffer. When `scene.visibleRegions` is supplied,
+ *  trace() builds a smaller subset of items reachable from the camera's
+ *  region into this array (items with regionKey in the camera region's
+ *  visible set, plus items with no regionKey). The per-ray bounding-
+ *  sphere loop then iterates this subset instead of the full scene.
+ *  Reused across calls to avoid per-frame allocation. */
+const _visibleItems = [];
 
 /** Per-ray candidate list — items whose bounding sphere intersects the ray.
  *  Valid prefix length is passed into marchRay alongside the array. */
@@ -322,6 +333,39 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   _maxDist  = originMaxDist ?? MAX_DIST;
   frameTime = performance.now();
 
+  // Per-trace pre-cull: if the scene declares which regions are reachable
+  // from each region (visibleRegions), drop items whose regionKey is not
+  // in the camera region's visible set before running the per-ray loops.
+  // Items with no regionKey always pass; items with an array regionKey
+  // pass if any of their keys is in the visible set. Falls through to
+  // the full scene when visibleRegions or regionFn is absent.
+  let activeScene = scene;
+  let activeLen   = scene.length;
+  if (scene.visibleRegions && scene.regionFn) {
+    const visibleSet = scene.visibleRegions[scene.regionFn(ox, oy, oz)];
+    if (visibleSet) {
+      let n = 0;
+      for (let i = 0; i < scene.length; i++) {
+        const item = scene[i];
+        const rk = item.regionKey;
+        if (rk == null) {
+          _visibleItems[n++] = item;
+        } else if (Array.isArray(rk)) {
+          for (let j = 0; j < rk.length; j++) {
+            if (visibleSet.indexOf(rk[j]) >= 0) {
+              _visibleItems[n++] = item;
+              break;
+            }
+          }
+        } else if (visibleSet.indexOf(rk) >= 0) {
+          _visibleItems[n++] = item;
+        }
+      }
+      activeScene = _visibleItems;
+      activeLen   = n;
+    }
+  }
+
   for (let i = 0; i < N; i++) {
     const dir = directions[i];
     const dx = dir[0], dy = dir[1], dz = dir[2];
@@ -331,8 +375,8 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
     // the bounding radius. Items without a bounding radius are kept (they're
     // large/infinite and could be hit by any ray).
     let nc = 0;
-    for (let j = 0; j < scene.length; j++) {
-      const item = scene[j];
+    for (let j = 0; j < activeLen; j++) {
+      const item = activeScene[j];
       if (item.invisible) continue;
       const r = item.boundingRadius;
       if (r == null) {
