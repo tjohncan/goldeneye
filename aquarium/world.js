@@ -33,6 +33,12 @@ import * as outside   from './secrets/outside.js';
 /** Y-coordinate of the water surface (= bowl rim). */
 export const WATER_SURFACE_Y = 6.25;
 
+/** Y-coordinate above which the camera teleports to spawn — set in the
+ * outside zone (the cove sun sits high in the dome) and consumed by
+ * main.js. Re-exported here so main.js doesn't reach into secret
+ * modules directly. */
+export { SUN_TRIGGER_Y } from './secrets/outside.js';
+
 /** Lighting: sun straight up, gentle ambient. Background is black —
  * silhouette-edge rays that exhaust MAX_STEPS without fully accumulating
  * opacity mix toward background, so coloring it non-black bleeds into
