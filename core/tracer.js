@@ -37,6 +37,15 @@ import { sdfGrad } from './scene.js';
 
 /**
  * @typedef {{
+ *   lightDir?:   Vec3,
+ *   ambient?:    number,
+ *   background?: Vec3,
+ *   maxDist?:    number,
+ * }} LightingPartial   per-region override; only set the fields you change
+ */
+
+/**
+ * @typedef {{
  *   lightDir:   Vec3,    // unit vector from surface toward the light source
  *   ambient:    number,  // 0..1 baseline brightness for surfaces facing away
  *   background: Vec3,    // [r, g, b] 0..255 mixed in for unaccumulated alpha
@@ -44,6 +53,14 @@ import { sdfGrad } from './scene.js';
  *                        // to the module-level MAX_DIST. Useful when a scene's
  *                        // largest dimension exceeds the default (e.g. a very
  *                        // large bounding shell that rays need to traverse).
+ *   byRegion?:  Record<string, LightingPartial>,
+ *                        // optional per-region overrides. Each entry merges
+ *                        // over the base lighting for rays whose ORIGIN
+ *                        // region matches the key. Lookup is per-trace
+ *                        // (all rays share an origin), so the cost is one
+ *                        // regionFn call per frame. Requires scene.regionFn;
+ *                        // ignored otherwise. Keys without an entry fall
+ *                        // through to the base lighting.
  * }} Lighting
  */
 
@@ -84,6 +101,17 @@ let _regionFn = null;
  *  lighting.maxDist (with module-level MAX_DIST fallback) in trace(),
  *  consumed by marchRay(). */
 let _maxDist = MAX_DIST;
+
+/** Pre-merged per-region shading table for per-hit lookups. Each entry
+ *  holds the shading-relevant fields (lx/ly/lz/ambient) of the merged
+ *  base+override Lighting for that region. Built once per trace() and
+ *  consulted at each hit in marchRay() so per-region lighting tracks
+ *  the SURFACE being shaded (not the camera). Surfaces in regions
+ *  without an override fall back to base shading; result is that
+ *  shading stays continuous across region boundaries — no hard flip
+ *  when the camera crosses from one region's "lit space" into
+ *  another's. Null when lighting.byRegion or scene.regionFn is absent. */
+let _byRegionShading = null;
 
 /** Frame time in milliseconds, sampled once at the start of each trace().
  *  Time-varying SDFs and colorFns read this instead of calling Date.now() /
@@ -149,9 +177,13 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
     let nearestItem = null;
     for (let i = 0; i < sceneLen; i++) {
       const item = scene[i];
-      // Region filter — cheapest check first (just a value compare on the
-      // already-fetched item).
-      if (region !== null && item.regionKey != null && item.regionKey !== region) continue;
+      // Region filter. Single-key items mismatch out fast; array-keyed
+      // items (registered to multiple regions) take an extra membership
+      // check. Items with no regionKey always pass.
+      const rk = item.regionKey;
+      if (region !== null && rk != null && rk !== region) {
+        if (!Array.isArray(rk) || rk.indexOf(region) < 0) continue;
+      }
       // Manual scan of the (typically tiny) inside list — faster than
       // Array.prototype.includes and avoids its iterator allocation.
       let isInside = false;
@@ -173,10 +205,25 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
       const [gx, gy, gz] = sdfGrad(nearestItem.sdf, lpx, lpy, lpz, nearestD, NORMAL_EPS);
       const glen = Math.sqrt(gx * gx + gy * gy + gz * gz);
 
-      let brightness = ambient;
+      // Per-hit shading: if the hit's region has a byRegion override,
+      // use that region's lightDir/ambient. The surface picks up its
+      // own region's shading regardless of where the camera is, so
+      // shading stays continuous across boundaries — no hard flip when
+      // the camera crosses into another region. Falls back to base
+      // shading (passed through marchRay params) when the hit region
+      // has no override or no key at all.
+      let hLx = lx, hLy = ly, hLz = lz, hAmbient = ambient;
+      if (_byRegionShading !== null && region !== null) {
+        const r = _byRegionShading[region];
+        if (r !== undefined) {
+          hLx = r.lx; hLy = r.ly; hLz = r.lz; hAmbient = r.ambient;
+        }
+      }
+
+      let brightness = hAmbient;
       if (glen > 1e-9) {
-        const ndotl = (gx * lx + gy * ly + gz * lz) / glen;
-        if (ndotl > 0) brightness += (1 - ambient) * ndotl;
+        const ndotl = (gx * hLx + gy * hLy + gz * hLz) / glen;
+        if (ndotl > 0) brightness += (1 - hAmbient) * ndotl;
       }
 
       const c = nearestItem.colorFn
@@ -229,19 +276,50 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
  */
 export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING) => {
   const ox = origin[0], oy = origin[1], oz = origin[2];
+  const N = directions.length;
+
+  // Per-region lighting setup. Two distinct concerns:
+  //   - maxDist is a per-RAY cap, can't sensibly vary mid-march, so the
+  //     ray-origin's region picks it (one regionFn call per trace).
+  //   - lightDir + ambient affect SHADING, which only matters at the
+  //     hit point; using the camera's region for them produces a jarring
+  //     flip when crossing a boundary. Pre-merge each region's shading
+  //     into _byRegionShading and let marchRay look up at each hit by
+  //     the HIT POINT's region instead.
+  // background is per-trace too (it modulates leftover-alpha on the ray
+  // as a whole; not worth a per-region nuance).
+  let originMaxDist = lighting.maxDist;
+  if (lighting.byRegion && scene.regionFn) {
+    const region = scene.regionFn(ox, oy, oz);
+    const override = lighting.byRegion[region];
+    if (override && override.maxDist !== undefined) originMaxDist = override.maxDist;
+
+    _byRegionShading = {};
+    for (const key in lighting.byRegion) {
+      const merged = { ...lighting, ...lighting.byRegion[key] };
+      const ld = merged.lightDir;
+      _byRegionShading[key] = {
+        lx: ld[0], ly: ld[1], lz: ld[2],
+        ambient: merged.ambient,
+      };
+    }
+  } else {
+    _byRegionShading = null;
+  }
+
+  // Base shading — used at hits in regions without a byRegion entry.
   const lightDir = lighting.lightDir;
   const lx = lightDir[0], ly = lightDir[1], lz = lightDir[2];
   const bg = lighting.background;
   const bgR = bg[0], bgG = bg[1], bgB = bg[2];
   const ambient = lighting.ambient;
-  const N = directions.length;
 
   if (_outBuffer === null || _outBuffer.length < 3 * N) {
     _outBuffer = new Float32Array(3 * N);
   }
 
   _regionFn = scene.regionFn || null;
-  _maxDist  = lighting.maxDist ?? MAX_DIST;
+  _maxDist  = originMaxDist ?? MAX_DIST;
   frameTime = performance.now();
 
   for (let i = 0; i < N; i++) {

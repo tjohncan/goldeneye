@@ -40,13 +40,20 @@
  *                           // WITHOUT this field are never filtered (use for
  *                           // large/infinite items — room, floor and ceiling
  *                           // planes).
- *   regionKey?: RegionKey,  // if set together with `Scene.regionFn`, the
+ *   regionKey?: RegionKey | RegionKey[],
+ *                           // if set together with `Scene.regionFn`, the
  *                           // tracer's per-step region filter only considers
  *                           // this item when the current ray-step point's
- *                           // region matches. Items WITHOUT a regionKey are
- *                           // always considered (use for items that span
- *                           // region boundaries — outer walls, floor and
- *                           // ceiling planes, the bowl glass).
+ *                           // region matches. A single key restricts the
+ *                           // item to one region; an array registers it to
+ *                           // multiple (useful for items that legitimately
+ *                           // straddle a region boundary — e.g., a thin
+ *                           // disk parked at the seam between two zones —
+ *                           // so sphere-trace doesn't overstep them during
+ *                           // the wrong region's marching). Items WITHOUT
+ *                           // a regionKey are always considered (use for
+ *                           // truly scene-spanning items: outer walls, floor
+ *                           // and ceiling planes).
  * }} Item
  */
 
@@ -148,25 +155,17 @@ export const cylinderSDF = (halfHeight, radius) => (px, py, pz) => {
 };
 
 /**
- * Inside-of-sphere SDF: positive inside, negative outside; gradient points
- * inward toward the local origin. Used as a closed bowl/arena boundary — a
- * fish inside gets pushed back toward center on collision.
- */
-/** @type {(radius: number) => SDF} */
-export const fishbowlSDF = (radius) => (px, py, pz) =>
-  radius - Math.sqrt(px * px + py * py + pz * pz);
-
-/**
- * Bowl with the top open: thin spherical shell wall (between innerR and
- * outerR) that exists only below Y = rimY. Above the rim, no wall — air
- * continues upward, so a camera inside the bowl can look up through the
+ * Open-top bowl: a thin spherical shell (between innerR and outerR) that
+ * exists only below Y = rimY. Above the rim there is no wall — air
+ * continues upward, so a viewer inside the bowl can look up through the
  * open top into whatever else is in the scene above.
  *
  * Returns a regular SDF (negative inside the wall material, positive in
- * air). For a fish inside the bowl: marching outward, the SDF approaches
- * zero at the inner wall surface (r = innerR), becomes negative inside the
- * shell, and goes positive again outside (r > outerR). Going up past the
- * rim, the (py - rimY) term keeps the SDF positive — no wall hit.
+ * air). Marching outward from the interior: the SDF approaches zero at
+ * the inner wall (r = innerR), goes negative inside the shell, and
+ * returns to positive outside (r > outerR). Above the rim, the
+ * (py - rimY) term keeps the SDF positive everywhere — the open top
+ * never reads as a hit.
  */
 /** @type {(opts: { outerR: number, innerR: number, rimY: number }) => SDF} */
 export const openTopBowlSDF = ({ outerR, innerR, rimY }) => (px, py, pz) => {

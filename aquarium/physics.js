@@ -104,9 +104,16 @@ export const bindPhysics = ({ camera, scene, fishRadius = 0.2 }) => {
           const item = scene[i];
           if (item.collides === false) continue;   // fish swims through
           if (nRegions > 0 && item.regionKey != null) {
+            const rk = item.regionKey;
             let inRegion = false;
-            for (let j = 0; j < nRegions; j++) {
-              if (touchedRegions[j] === item.regionKey) { inRegion = true; break; }
+            if (Array.isArray(rk)) {
+              for (let j = 0; j < nRegions && !inRegion; j++) {
+                if (rk.indexOf(touchedRegions[j]) >= 0) inRegion = true;
+              }
+            } else {
+              for (let j = 0; j < nRegions; j++) {
+                if (touchedRegions[j] === rk) { inRegion = true; break; }
+              }
             }
             if (!inRegion) continue;
           }
@@ -129,7 +136,8 @@ export const bindPhysics = ({ camera, scene, fishRadius = 0.2 }) => {
 
         // Push along normalized gradient by the overlap distance. The gradient
         // direction works for both regular SDFs (push outward away from prop)
-        // and inverted SDFs like fishbowlSDF (push inward away from wall).
+        // and inverted-shell SDFs like the room walls (push inward away from
+        // the wall surface back into the room interior).
         const overlap = fishRadius - minD;
         const scale = overlap / glen;
         camera.position = [
