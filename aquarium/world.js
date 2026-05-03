@@ -79,7 +79,7 @@ export const LIGHTING = {
       // the room-glow translucent box (mousehole.js) carries the
       // additional blue-cathode wash on top.
       lightDir: [1, 0, 0],
-      ambient:  0.30,
+      ambient:  0.40,
     },
     [chamber.REGION_CHAMBER]: {
       // Light comes from the back wall (-Z side, where the marquee
@@ -141,6 +141,37 @@ const SPEED_MUL_BY_REGION = {
   [outside.REGION_OUTSIDE]: 10,
 };
 
+/**
+ * Region-adjacency map: for a camera in region X, which region's items
+ * could a ray possibly reach? The tracer uses this to pre-cull items
+ * whose region isn't reachable, before the per-ray bounding-sphere
+ * filter. Coarser than the per-step cull but earlier in the pipeline.
+ *
+ *   - bowl ↔ kitchen: through the translucent fishbowl glass and the
+ *     bowl's open top.
+ *   - kitchen ↔ mousehole: through the entrance tunnel.
+ *   - mousehole/bowl: through tunnel → kitchen → glass.
+ *   - chamber → kitchen: chamber rays exiting through the entry pipe
+ *     enter kitchen-region steps; the sun-cover (tagged BOTH chamber
+ *     and kitchen via array regionKey) gets caught by the kitchen
+ *     entry, so chamber's adjacency need not list bowl/mousehole.
+ *   - chamber inbound: pure-chamber items (gyroid, marquee) aren't
+ *     reachable from bowl/kitchen/mousehole — sun-cover blocks the
+ *     pipe — so those regions don't list chamber. The sun-cover
+ *     itself rides in via its kitchen tag.
+ *   - outside: fully isolated (door/window/painting/veil curtains all
+ *     opaque from inside; building exterior opaque from outside).
+ *
+ * @type {Record<string, string[]>}
+ */
+const VISIBLE_REGIONS = {
+  [bowl.REGION_BOWL]:           [bowl.REGION_BOWL, kitchen.REGION_KITCHEN, mousehole.REGION_MOUSEHOLE],
+  [kitchen.REGION_KITCHEN]:     [kitchen.REGION_KITCHEN, bowl.REGION_BOWL, mousehole.REGION_MOUSEHOLE],
+  [mousehole.REGION_MOUSEHOLE]: [mousehole.REGION_MOUSEHOLE, kitchen.REGION_KITCHEN, bowl.REGION_BOWL],
+  [chamber.REGION_CHAMBER]:     [chamber.REGION_CHAMBER, kitchen.REGION_KITCHEN],
+  [outside.REGION_OUTSIDE]:     [outside.REGION_OUTSIDE],
+};
+
 
 // ──────────────────────────── world build ────────────────────────────
 
@@ -159,7 +190,8 @@ const SPEED_MUL_BY_REGION = {
  */
 export const createWorld = () => {
   const scene = createScene();
-  scene.regionFn = regionFn;
+  scene.regionFn       = regionFn;
+  scene.visibleRegions = VISIBLE_REGIONS;
 
   // Fishbowl glass — registered to BOTH bowl and kitchen so per-step
   // cull keeps it for rays in either region (translucent: visible from
