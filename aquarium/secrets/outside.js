@@ -29,6 +29,7 @@ import {
 } from '../zones/kitchen.js';
 import { mouseholeAirSdf } from './mousehole.js';
 import { chamberAirSdf }   from './chamber.js';
+import { sampleClouds }    from '../clouds.js';
 
 export const REGION_OUTSIDE = 'outside';
 
@@ -152,7 +153,7 @@ const KEYHOLE_BOUND_R = Math.hypot(
 );
 
 // Sky dome — open-top bowl concentric with the kitchen's fishbowl
-// (which sits at world origin), vastly larger (≈120× the kitchen
+// (which sits at world origin), vastly larger (≈137× the kitchen
 // bowl's radius). With the 10× outside-region speed multiplier, this
 // makes the cove feel about 1000× the linear units of the kitchen so
 // it reads as truly massive. Inner/outer shell shape mirrors
@@ -168,11 +169,12 @@ const DOME_RIM_Y   = 2000;
 // Sun — over-bright sphere parked near the dome's apex. Two jobs:
 // visual anchor (an unmistakable "up" reference from anywhere in the
 // cove) and teleport trigger (camera Y past SUN_TRIGGER_Y resets to
-// spawn — see main.js). Color magnitudes well past 255 so lambertian
-// × ambient still clamps to white at the painter from any angle: the
-// sun reads pure-white whether the lit or shadowed face is toward
-// the camera. Big enough that flying into it is easy and obvious;
-// the player's view fills with white well before the trigger fires.
+// spawn — see main.js). Color is the kitchen sun-cover [255, 235, 120]
+// scaled 3× so over-bright magnitudes clamp R + G to 255 at any view
+// angle (ambient × R = 268, × G = 247), while leaving B at ~126 short
+// of clamp — the sun reads as a vibrant yellow disc rather than a
+// pure-white potlight, distinct from the cloud field on the dome and
+// callback to the painted-sun on the kitchen window.
 const SUN_POSITION = [0, 970, 0];
 const SUN_RADIUS   = 60;
 // Camera teleports back to spawn when Y exceeds this. Set 10 units
@@ -287,20 +289,37 @@ const houseExteriorSdf = cutSDF(
 // ─────────────────────────── colorFns ───────────────────────────
 
 // Sky: gradient from light pale-blue near horizon up to deeper blue at
-// zenith. The dome's inner-wall normals all point toward the origin, so
+// zenith, with drifting cloud anchors painted on top via sampleClouds.
+// The dome's inner-wall normals all point toward the origin, so
 // lambertian (light from +Y) dims the upper hemisphere to ambient (35%)
 // and brightens the lower hemisphere to 100% — that creates a hard
 // "dark cliff" seam at the equator. To make the dome read as uniform
 // sky from any viewing angle, pre-divide each color by the brightness
 // the tracer is going to multiply by, so post-shading we land on the
-// intended gradient. ndotl at hit point ≈ -lpy / DOME_INNER_R since
-// the normal is the inward radial direction.
+// intended gradient. Clouds inherit that pre-divide too, so they read
+// uniformly bright regardless of which face of the dome they sit on.
+// ndotl at hit point ≈ -lpy / DOME_INNER_R since the normal is the
+// inward radial direction.
 const domeColorFn = (lpx, lpy, lpz) => {
-  const t = Math.max(0, Math.min(1, lpy / DOME_INNER_R));
-  const r = 130 - 70 * t;
-  const g = 180 - 60 * t;
-  const b = 235 - 35 * t;
-  const ndotl = -lpy / DOME_INNER_R;
+  const inv = 1 / DOME_INNER_R;
+  const nx = lpx * inv, ny = lpy * inv, nz = lpz * inv;
+
+  const t = Math.max(0, Math.min(1, ny));
+  let r = 130 - 70 * t;
+  let g = 180 - 60 * t;
+  let b = 235 - 35 * t;
+
+  // Cloud overlay — cloud[1..3] are alpha-premultiplied, so mix as
+  // sky * (1 - op) + premult.
+  const cloud = sampleClouds(nx, ny, nz);
+  const op = cloud[0];
+  if (op > 0) {
+    r = r * (1 - op) + cloud[1];
+    g = g * (1 - op) + cloud[2];
+    b = b * (1 - op) + cloud[3];
+  }
+
+  const ndotl = -ny;
   const brightness = 0.35 + 0.65 * Math.max(0, ndotl);
   const c = 1 / brightness;
   return [r * c, g * c, b * c];
@@ -467,7 +486,7 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   // the sun.
   add({
     name:     'outside-sun',
-    color:    [1000, 950, 750],
+    color:    [765, 705, 360],
     position: SUN_POSITION,
     sdf:      sphereSDF(SUN_RADIUS),
     collides: false,
