@@ -165,6 +165,23 @@ const DOME_OUTER_R = 1000;
 const DOME_INNER_R =  998;
 const DOME_RIM_Y   = 2000;
 
+// Sun — over-bright sphere parked near the dome's apex. Two jobs:
+// visual anchor (an unmistakable "up" reference from anywhere in the
+// cove) and teleport trigger (camera Y past SUN_TRIGGER_Y resets to
+// spawn — see main.js). Color magnitudes well past 255 so lambertian
+// × ambient still clamps to white at the painter from any angle: the
+// sun reads pure-white whether the lit or shadowed face is toward
+// the camera. Big enough that flying into it is easy and obvious;
+// the player's view fills with white well before the trigger fires.
+const SUN_POSITION = [0, 970, 0];
+const SUN_RADIUS   = 60;
+// Camera teleports back to spawn when Y exceeds this. Set 10 units
+// past the sun's bottom (= SUN_POSITION[1] - SUN_RADIUS = 910), so
+// the trigger fires once the camera is inside the sphere, leaving
+// plenty of room before the dome's inner wall at r=998 in case the
+// player drifts off-axis.
+export const SUN_TRIGGER_Y = SUN_POSITION[1] - SUN_RADIUS + 10;
+
 // Ground base curve — flat annular plateau around the building (so the
 // shack sits on level land), then linear slope along X outside the
 // plateau (-X drops away, +X climbs toward mountains). Plateau radius
@@ -441,6 +458,20 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     colorFn:  domeColorFn,
     position: [0, 0, 0],
     sdf:      openTopBowlSDF({ outerR: DOME_OUTER_R, innerR: DOME_INNER_R, rimY: DOME_RIM_Y }),
+  });
+
+  // Sun — over-bright sphere up near the dome's apex. Visual anchor
+  // and teleport trigger (camera Y > SUN_TRIGGER_Y → reset to spawn,
+  // checked in main.js). collides:false so the camera passes through;
+  // the teleport fires before the camera reaches the dome wall behind
+  // the sun.
+  add({
+    name:     'outside-sun',
+    color:    [1000, 950, 750],
+    position: SUN_POSITION,
+    sdf:      sphereSDF(SUN_RADIUS),
+    collides: false,
+    boundingRadius: SUN_RADIUS + 0.05,
   });
 
   // Ground base curve — heightfield with a single-axis (X) linear slope.
