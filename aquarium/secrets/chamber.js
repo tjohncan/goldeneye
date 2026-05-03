@@ -21,9 +21,9 @@
 
 import {
   registerItem,
-  sphereSDF, boxSDF, planeSDF, cylinderSDF,
-  unionSDF, intersectionSDF, smoothUnionSDF, cutSDF, invertSDF,
-  translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
+  sphereSDF, boxSDF, cylinderSDF,
+  unionSDF, intersectionSDF, cutSDF, invertSDF,
+  translateSDF, rotateXSDF,
 } from '../../core/scene.js';
 import { frameTime } from '../../core/tracer.js';
 import { REGION_KITCHEN } from '../zones/kitchen.js';
@@ -148,20 +148,30 @@ const GYROID_R = 0.77;                         // bounding sphere radius
 const GYROID_RATE_X = 0.31;
 const GYROID_RATE_Y = 0.43;
 const GYROID_RATE_Z = 0.57;
+// Per-frame trig cache for the gyroid's rotation matrices. The marcher
+// can hit the gyroid's bounding sphere up to MAX_STEPS=44 times per
+// ray, and each step recomputes 6 cos/sin of the same per-frame angles
+// otherwise — wasted work since frameTime is constant within a trace.
+// Keyed off frameTime so the cache invalidates exactly once per frame.
+let _gyroidCachedTime = -1;
+let _gxC = 0, _gxS = 0, _gyC = 0, _gyS = 0, _gzC = 0, _gzS = 0;
 const gyroidSdf = intersectionSDF(
   (px, py, pz) => {
-    const t = frameTime / 1000;
-    const cx = Math.cos(t * GYROID_RATE_X), sx = Math.sin(t * GYROID_RATE_X);
-    const cy = Math.cos(t * GYROID_RATE_Y), sy = Math.sin(t * GYROID_RATE_Y);
-    const cz = Math.cos(t * GYROID_RATE_Z), sz = Math.sin(t * GYROID_RATE_Z);
+    if (frameTime !== _gyroidCachedTime) {
+      const t = frameTime / 1000;
+      _gxC = Math.cos(t * GYROID_RATE_X); _gxS = Math.sin(t * GYROID_RATE_X);
+      _gyC = Math.cos(t * GYROID_RATE_Y); _gyS = Math.sin(t * GYROID_RATE_Y);
+      _gzC = Math.cos(t * GYROID_RATE_Z); _gzS = Math.sin(t * GYROID_RATE_Z);
+      _gyroidCachedTime = frameTime;
+    }
 
     // Apply Rx, then Ry, then Rz to (px, py, pz).
-    const y1 = py * cx - pz * sx;
-    const z1 = py * sx + pz * cx;
-    const x2 = px * cy + z1 * sy;
-    const z2 = -px * sy + z1 * cy;
-    const x3 = x2 * cz - y1 * sz;
-    const y3 = x2 * sz + y1 * cz;
+    const y1 = py * _gxC - pz * _gxS;
+    const z1 = py * _gxS + pz * _gxC;
+    const x2 = px * _gyC + z1 * _gyS;
+    const z2 = -px * _gyS + z1 * _gyC;
+    const x3 = x2 * _gzC - y1 * _gzS;
+    const y3 = x2 * _gzS + y1 * _gzC;
 
     const tx = x3 * GYROID_K, ty = y3 * GYROID_K, tz = z2 * GYROID_K;
     return (Math.sin(tx) * Math.cos(ty)
@@ -216,6 +226,7 @@ const GLYPHS = {
 const MARQUEE_TEXT     = ":: THANK YOU FOR VISITING ! ::  TIG.SYSTEMS  :: HAVE A NICE DAY ! ::  ";
 const MARQUEE_GLYPH_W  = 0.18;                 // per-glyph width on the marquee strip
 const MARQUEE_GLYPH_H  = 0.30;                 // per-glyph height (matches the strip's vertical span)
+const MARQUEE_TOTAL_W  = MARQUEE_TEXT.length * MARQUEE_GLYPH_W;
 // Margins inside each glyph cell — keeps letters from running into each
 // other and from kissing the top/bottom edges of the strip.
 const GLYPH_MARGIN_X   = 0.18;
@@ -240,11 +251,10 @@ const marqueeColorFn = (lpx, lpy, lpz) => {
   const strip_lpy = lpy + MARQUEE_GLYPH_H / 2;
   if (strip_lpy < 0 || strip_lpy > MARQUEE_GLYPH_H) return [12, 8, 18];
 
-  // Scroll: time-based offset, then wrap into [0, totalW).
+  // Scroll: time-based offset, then wrap into [0, MARQUEE_TOTAL_W).
   const t = frameTime / 1000;
-  const totalW = MARQUEE_TEXT.length * MARQUEE_GLYPH_W;
   const offsetX = lpx + t * SCROLL_SPEED;
-  const wrappedX = ((offsetX % totalW) + totalW) % totalW;
+  const wrappedX = ((offsetX % MARQUEE_TOTAL_W) + MARQUEE_TOTAL_W) % MARQUEE_TOTAL_W;
 
   const charIndex = Math.floor(wrappedX / MARQUEE_GLYPH_W) % MARQUEE_TEXT.length;
   const letter    = MARQUEE_TEXT[charIndex] || ' ';
