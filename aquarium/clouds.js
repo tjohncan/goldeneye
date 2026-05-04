@@ -1,6 +1,6 @@
-// aquarium/clouds.js — drifting cloud "anchors" painted onto the sky dome
-// of the outside zone. Sampled per dome-pixel by domeColorFn; otherwise
-// invisible to the rest of the engine.
+// aquarium/clouds.js — drifting cloud "anchors" painted onto the sky
+// firmament of the outside zone. Sampled per pixel by firmamentColorFn;
+// otherwise invisible to the rest of the engine.
 //
 // Stateless across frames except for a small per-frame cache. Each cloud
 // slot's parameters are pure functions of (slot index, frameTime), so
@@ -10,23 +10,33 @@
 // reads as "an old cloud faded out, a new one was born somewhere
 // fresh" without any persistent state to manage.
 //
-// Each cloud is a smooth-cluster of NUM_LOBES tangent-plane sub-spheres
-// at the cloud's center direction on the dome. Per pixel: a dot-product
-// reject knocks out far-away clouds first, then 4 sub-lobe distance
-// checks build the cloud's silhouette. Per-frame state (center vector,
-// tangent basis, sub-lobe layout) is cached once per frame in
-// _cachedStates so the per-pixel hot path stays trig-free.
+// Each cloud is a two-tier cluster of NUM_LOBES tangent-plane sub-
+// spheres at the cloud's center direction on the firmament. Per pixel:
+// a dot-product reject knocks out far-away clouds first, then per-lobe
+// distance checks build the cloud's silhouette. Per-frame state
+// (center vector, tangent basis, sub-lobe layout) is cached once per
+// frame in _cachedStates so the per-pixel hot path stays trig-free.
 
 import { frameTime } from '../core/tracer.js';
 
-// Number of concurrent cloud slots in the sky. Phase-staggered so they
-// don't all fade at the same time.
-const NUM_CLOUDS = 7;
+// Total cloud slots across both layers (white upper + grey lower).
+// Each layer reads 7 slots; with slot-key differentiation the two
+// layers get fully independent cloud parameters (different sub-lobe
+// layouts, sizes, drifts, tints) — no shape duplicates across layers.
+const NUM_CLOUDS_PER_LAYER = 7;
+const NUM_CLOUDS = NUM_CLOUDS_PER_LAYER * 2;
 
 // One cloud's full birth → drift → death cycle in seconds. Tuned so a
 // minute of staring shows clear composition turnover (a cloud or two
 // dies + is reborn somewhere fresh).
 const CYCLE_LENGTH = 110;
+
+// Fade-in / fade-out duration in seconds. Cloud opacity ramps linearly
+// 0 → 1 over the first FADE_DURATION_S of each cycle, holds at 1 for
+// the middle, then ramps 1 → 0 over the final FADE_DURATION_S.
+// Visible turnover stays slow (clouds appear and disappear gradually).
+const FADE_DURATION_S = 15;
+const FADE_FRACTION   = FADE_DURATION_S / CYCLE_LENGTH;
 
 // Cloud silhouette is a two-tier cluster: NUM_PRIMARY large "primary"
 // puffs around the cloud center, each with NUM_SATELLITE smaller
@@ -74,6 +84,7 @@ for (let i = 0; i < NUM_CLOUDS; i++) {
     fade: 0,                                 // 0..1 birth/death envelope
     flatness: 1,                             // tangent-Y squash factor
     lobeOx, lobeOy, lobeR,                   // sub-lobe (u, v) centers + radii
+    maxLobeR: 0,                             // largest sub-lobe radius (per-cloud depth normalizer)
     tintR: 240, tintG: 240, tintB: 240,
   });
 }
@@ -89,7 +100,14 @@ const refreshCloudCache = () => {
 
     const phased = t + PHASE_OFFSETS[slot];
     const cycleT = (phased / CYCLE_LENGTH) % 1;            // 0..1 within current cycle
-    const fade = Math.sin(Math.PI * cycleT);               // smooth birth → peak → death
+    // Linear ramp up over FADE_FRACTION, plateau at 1, linear ramp
+    // down over FADE_FRACTION. Gives a long visible plateau with a
+    // slow fade in and out at the cycle boundaries.
+    const fade = cycleT < FADE_FRACTION
+      ? cycleT / FADE_FRACTION
+      : cycleT > 1 - FADE_FRACTION
+        ? (1 - cycleT) / FADE_FRACTION
+        : 1;
 
     if (fade < 0.01) { state.active = false; continue; }
     state.active = true;
@@ -100,7 +118,7 @@ const refreshCloudCache = () => {
     const epoch = Math.floor(phased / CYCLE_LENGTH);
 
     const baseAzim   = hash01(slot, epoch, 1) * Math.PI * 2;
-    const baseElev   = 0.20 + hash01(slot, epoch, 2) * 0.70;   // 0.2..0.9 rad above horizon
+    const baseElev   = 0.44 + hash01(slot, epoch, 2) * 0.67;   // 0.44..1.11 rad above horizon — above mountain peaks, below the sun
     const size       = 0.09 + hash01(slot, epoch, 3) * 0.18;   // 5°..15° angular radius
     const flatness   = 0.7  + hash01(slot, epoch, 4) * 1.5;    // 0.7..2.2 vertical squash
     const driftAzim  = (hash01(slot, epoch, 5) - 0.5) * 0.18;  // total azim drift across cycle
@@ -124,7 +142,7 @@ const refreshCloudCache = () => {
     // Tangent basis at the cloud center. World up is (0, 1, 0); for a
     // near-zenith cloud (cy ~ 1) world up is parallel to center, giving
     // a degenerate cross — fall back to +X. Cove clouds spawn at
-    // elev ≤ 0.9 rad (cy ≤ 0.78) so this fallback shouldn't trigger,
+    // elev ≤ 1.11 rad (cy ≤ 0.90) so this fallback shouldn't trigger,
     // but kept for safety.
     let upX = 0, upY = 1, upZ = 0;
     if (Math.abs(state.cy) > 0.95) { upX = 1; upY = 0; upZ = 0; }
@@ -144,6 +162,7 @@ const refreshCloudCache = () => {
     // silhouette reads as one organically-grown cumulus cluster.
     const lobeSeed = epoch * 100 + slot;
     let lobeIdx = 0;
+    let maxLobeR = 0;
     for (let p = 0; p < NUM_PRIMARY; p++) {
       // Primary puff — modest distance from cloud center, chunky size.
       const pAng = hash01(lobeSeed, p, 11) * Math.PI * 2;
@@ -154,6 +173,7 @@ const refreshCloudCache = () => {
       state.lobeOx[lobeIdx] = pOx;
       state.lobeOy[lobeIdx] = pOy;
       state.lobeR[lobeIdx]  = pR;
+      if (pR > maxLobeR) maxLobeR = pR;
       lobeIdx++;
 
       // Satellites attached to this primary's edge — angle around the
@@ -168,9 +188,11 @@ const refreshCloudCache = () => {
         state.lobeOx[lobeIdx] = pOx + Math.cos(sAng) * sAttach;
         state.lobeOy[lobeIdx] = pOy + Math.sin(sAng) * sAttach;
         state.lobeR[lobeIdx]  = sR;
+        if (sR > maxLobeR) maxLobeR = sR;
         lobeIdx++;
       }
     }
+    state.maxLobeR = maxLobeR;
 
     // Tint — bright white-cream with subtle per-cloud variation.
     state.tintR = 235 + hash01(slot, epoch, 7) * 20;
@@ -179,26 +201,42 @@ const refreshCloudCache = () => {
   }
 };
 
-// Module-level scratch buffer: [accumulatedOpacity, premultR, premultG, premultB].
-// Values 1..3 are alpha-premultiplied so the dome colorFn can mix as
-// `sky * (1 - op) + premult` without re-multiplying.
-const _cloudOut = [0, 0, 0, 0];
+// Module-level scratch buffer:
+//   [0] totalOp           — alpha-composited cloud opacity at this direction
+//   [1..3] premultR/G/B   — alpha-premultiplied cloud color
+//   [4] maxLobeOp         — un-faded peak lobe contribution (clamped 0..1),
+//                           used by the cloud overlay caller to derive
+//                           effective fade via cloudOp / maxLobeOp
+//   [5] maxNormalizedDepth — depth into the deepest contributing lobe,
+//                            normalized by THAT cloud's max lobe radius
+//                            (range 0 at edge → 1 at deepest core); used
+//                            for pure-radial materialization order so the
+//                            cloud's silhouette grows from center outward
+//                            during fade-in, shrinks the same on fade-out.
+const _cloudOut = [0, 0, 0, 0, 0, 0];
 
 /**
- * Sample the cloud field at a unit dome direction. Returns a shared
- * scratch buffer [opacity, r, g, b] where r/g/b are alpha-premultiplied.
- * The caller (domeColorFn) mixes as: sky * (1 - opacity) + [r, g, b].
+ * Sample the cloud field at a unit dome direction for a given layer
+ * (0 = upper white, 1 = lower grey). Each layer reads a disjoint
+ * range of cloud slots (0..6 vs 7..13) so the two layers render fully
+ * independent cloud silhouettes — no shape duplicates. Returns a
+ * shared scratch buffer [opacity, r, g, b, maxLobeOp, maxNormalizedDepth].
  *
  * @param {number} nx @param {number} ny @param {number} nz  unit direction
- * @returns {number[]}                       [opacity, r, g, b], scratch — consume immediately
+ * @param {number} [layerIdx=0]                              which layer's slot range to read
+ * @returns {number[]}                                       scratch buffer — consume immediately
  */
-export const sampleClouds = (nx, ny, nz) => {
+export const sampleClouds = (nx, ny, nz, layerIdx = 0) => {
   refreshCloudCache();
 
   let totalOp = 0;
   let totalR = 0, totalG = 0, totalB = 0;
+  let maxLobeOp = 0;
+  let maxNormalizedDepth = 0;
 
-  for (let slot = 0; slot < NUM_CLOUDS; slot++) {
+  const slotStart = layerIdx * NUM_CLOUDS_PER_LAYER;
+  const slotEnd   = slotStart + NUM_CLOUDS_PER_LAYER;
+  for (let slot = slotStart; slot < slotEnd; slot++) {
     const c = _cachedStates[slot];
     if (!c.active) continue;
 
@@ -226,9 +264,16 @@ export const sampleClouds = (nx, ny, nz) => {
     }
     if (minDist >= 0) continue;                                // outside all lobes
 
-    // Soft edge: opacity ramps from 0 at lobe boundary to 1 over EDGE_WIDTH.
-    let op = -minDist / EDGE_WIDTH;
+    const depth = -minDist;                                    // distance into cloud, positive
+    let op = depth / EDGE_WIDTH;
     if (op > 1) op = 1;
+    if (op > maxLobeOp) maxLobeOp = op;
+
+    // Per-cloud-normalized depth: 1 at deepest possible point in this
+    // cloud (lobe centers of the biggest sub-lobe), 0 at any lobe's
+    // boundary. Used by cloud shell for radial materialization order.
+    const normalizedDepth = depth / c.maxLobeR;
+    if (normalizedDepth > maxNormalizedDepth) maxNormalizedDepth = normalizedDepth;
 
     const cloudOp = op * c.fade;
     const w = cloudOp * (1 - totalOp);                         // remaining alpha after over-blending
@@ -243,5 +288,7 @@ export const sampleClouds = (nx, ny, nz) => {
   _cloudOut[1] = totalR;
   _cloudOut[2] = totalG;
   _cloudOut[3] = totalB;
+  _cloudOut[4] = maxLobeOp;
+  _cloudOut[5] = maxNormalizedDepth;
   return _cloudOut;
 };
