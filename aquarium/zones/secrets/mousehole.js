@@ -1,4 +1,4 @@
-// aquarium/secrets/mousehole.js — secret zone tucked behind the kitchen's
+// aquarium/zones/secrets/mousehole.js — secret zone tucked behind the kitchen's
 // front-left wall corner. Reached by swimming into a tiny mouse-hole-
 // shaped arch in the left wall (x = -22) near the front (z ≈ +21).
 //
@@ -26,9 +26,9 @@ import {
   sphereSDF, boxSDF, planeSDF, capsuleBetweenSDF, cylinderSDF,
   unionSDF, intersectionSDF, smoothUnionSDF, cutSDF, invertSDF,
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
-} from '../../core/scene.js';
-import { frameTime } from '../../core/tracer.js';
-import { FLOOR_Y } from '../zones/kitchen.js';
+} from '../../../core/scene.js';
+import { frameTime } from '../../../core/tracer.js';
+import { FLOOR_Y } from '../kitchen.js';
 
 export const REGION_MOUSEHOLE = 'mousehole';
 
@@ -466,8 +466,8 @@ const starletPosterColorFn = (lpx, lpy, lpz) => {
  * Add the mousehole zone to the scene. Mutates the caller-supplied kitchen
  * `room` item to carve the entrance tunnel; appends mousehole-region items.
  *
- * @param {import('../../core/scene.js').Scene} scene
- * @param {{ room: import('../../core/scene.js').Item }} kitchen
+ * @param {import('../../../core/scene.js').Scene} scene
+ * @param {{ room: import('../../../core/scene.js').Item }} kitchen
  *        Handles to kitchen items this zone needs to mutate.
  */
 export const addToScene = (scene, { room: kitchenRoom }) => {

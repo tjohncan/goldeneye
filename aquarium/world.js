@@ -26,18 +26,18 @@ import {
 import * as bowl      from './zones/bowl.js';
 import * as kitchen   from './zones/kitchen.js';
 import { ROOM_HALF_X, ROOM_HALF_Y, ROOM_HALF_Z } from './zones/kitchen.js';
-import * as mousehole from './secrets/mousehole.js';
-import * as chamber   from './secrets/chamber.js';
-import * as outside   from './secrets/outside.js';
+import * as mousehole from './zones/secrets/mousehole.js';
+import * as chamber   from './zones/secrets/chamber.js';
+import * as outside   from './zones/secrets/outside.js';
 
 /** Y-coordinate of the water surface (= bowl rim). */
 export const WATER_SURFACE_Y = 6.25;
 
-/** Y-coordinate above which the camera teleports to spawn — set in the
- * outside zone (the cove sun sits high in the dome) and consumed by
- * main.js. Re-exported here so main.js doesn't reach into secret
- * modules directly. */
-export { SUN_TRIGGER_Y } from './secrets/outside.js';
+/** Y-coordinate above which the camera teleports — set in the outside
+ * zone (the cove sun sits high in the dome) and consumed by main.js.
+ * Re-exported here so main.js doesn't reach into secret modules
+ * directly. */
+export { SUN_TRIGGER_Y } from './zones/secrets/outside.js';
 
 /** Lighting: sun straight up, gentle ambient. Background is black —
  * silhouette-edge rays that exhaust MAX_STEPS without fully accumulating

@@ -1,4 +1,4 @@
-// aquarium/secrets/chamber.js — abstract showcase zone reached by
+// aquarium/zones/secrets/chamber.js — abstract showcase zone reached by
 // swimming INTO the painted sun on the kitchen window. An entry pipe
 // is carved through the window at the painted-sun location (a thin
 // yellow sun-cover hides the carve from kitchen rays so it still
@@ -24,9 +24,9 @@ import {
   sphereSDF, boxSDF, cylinderSDF,
   unionSDF, intersectionSDF, cutSDF, invertSDF,
   translateSDF, rotateXSDF,
-} from '../../core/scene.js';
-import { frameTime } from '../../core/tracer.js';
-import { REGION_KITCHEN } from '../zones/kitchen.js';
+} from '../../../core/scene.js';
+import { frameTime } from '../../../core/tracer.js';
+import { REGION_KITCHEN } from '../kitchen.js';
 
 export const REGION_CHAMBER = 'chamber';
 
@@ -335,10 +335,10 @@ const gyroidColorFn = (lpx, lpy, lpz) => {
  * `room` AND `window` items in place to carve the entry pipe through the
  * back wall and through the painted-sun area of the window.
  *
- * @param {import('../../core/scene.js').Scene} scene
+ * @param {import('../../../core/scene.js').Scene} scene
  * @param {{
- *   room:   import('../../core/scene.js').Item,
- *   window: import('../../core/scene.js').Item,
+ *   room:   import('../../../core/scene.js').Item,
+ *   window: import('../../../core/scene.js').Item,
  * }} kitchen   Handles to kitchen items this zone needs to mutate.
  */
 export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) => {

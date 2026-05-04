@@ -1,4 +1,4 @@
-// aquarium/clouds.js — drifting cloud "anchors" painted onto the sky
+// aquarium/assets/clouds.js — drifting cloud "anchors" painted onto the sky
 // firmament of the outside zone. Sampled per pixel by firmamentColorFn;
 // otherwise invisible to the rest of the engine.
 //
@@ -17,7 +17,7 @@
 // (center vector, tangent basis, sub-lobe layout) is cached once per
 // frame in _cachedStates so the per-pixel hot path stays trig-free.
 
-import { frameTime } from '../core/tracer.js';
+import { frameTime } from '../../core/tracer.js';
 
 // Total cloud slots across both layers (white upper + grey lower).
 // Each layer reads 7 slots; with slot-key differentiation the two

@@ -6,7 +6,7 @@ import { quatLookAt }   from './core/r3.js';
 import { createWorld, LIGHTING, WATER_SURFACE_Y, SUN_TRIGGER_Y } from './aquarium/world.js';
 import { bindControls }     from './aquarium/controls.js';
 import { bindPhysics }      from './aquarium/physics.js';
-import { createBubblePump } from './aquarium/bubblePump.js';
+import { createBubblePump } from './aquarium/assets/bubblePump.js';
 import { throttle }         from './aquarium/fpsThrottle.js';
 
 const SCREEN_W    = 64;
@@ -63,10 +63,9 @@ const tick = throttle(MAX_FPS, (timeMs) => {
   // Sun teleport — flying high enough into the cove sun warps the
   // camera into the chamber (TELEPORT_POSITION). Sits AFTER physics
   // (sees post-collision Y) and BEFORE trace (teleport reflected in
-  // this frame's render, no flash of the pre-teleport view). Pure Y
-  // check rather than sphere containment: the cove's other regions
-  // all live well below this height, so a single threshold can't
-  // false-fire from indoors.
+  // this frame's render, no flash of the pre-teleport view). A pure
+  // Y threshold suffices: the cove's other regions all live well
+  // below SUN_TRIGGER_Y, so the check can't false-fire from indoors.
   if (camera.position[1] > SUN_TRIGGER_Y) {
     camera.position    = TELEPORT_POSITION;
     camera.orientation = quatLookAt(TELEPORT_POSITION, TELEPORT_LOOK_AT, TELEPORT_UP);

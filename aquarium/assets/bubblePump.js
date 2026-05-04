@@ -1,4 +1,4 @@
-// aquarium/bubblePump.js — column of water bubbles rising from a fixed source.
+// aquarium/assets/bubblePump.js — column of water bubbles rising from a fixed source.
 //
 // Bubbles are real Items in the scene (rendered through the lens with
 // fisheye distortion + lambertian shading), NOT screen-space overlays.
@@ -11,12 +11,12 @@
 // — a slot becomes "active" on spawn (visibility on) and parks itself out
 // of the way (visibility off) when it reaches the surface.
 
-import { sphereSDF, registerItem } from '../core/scene.js';
-import { REGION_BOWL } from './zones/bowl.js';
+import { sphereSDF, registerItem } from '../../core/scene.js';
+import { REGION_BOWL } from '../zones/bowl.js';
 
-/** @typedef {import('../core/r3.js').Vec3} Vec3 */
-/** @typedef {import('../core/scene.js').Scene} Scene */
-/** @typedef {import('../core/scene.js').Item}  Item  */
+/** @typedef {import('../../core/r3.js').Vec3} Vec3 */
+/** @typedef {import('../../core/scene.js').Scene} Scene */
+/** @typedef {import('../../core/scene.js').Item}  Item  */
 
 const BUBBLE_COLOR = [200, 220, 240];
 const SPAWN_JITTER_RADIUS = 0.15;   // ± horizontal offset from pump position

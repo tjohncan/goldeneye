@@ -42,9 +42,10 @@ node serve.js
     - `bowl.js` — tank decor (sand, rocks, plants, chest, ship + mermaid)
     - `kitchen.js` — furnishings (table, fridge, counter, sink, window, door, artworks)
     - `secrets/` — additional *hidden locales* to hunt
+  - `assets/` — separate content modules for complex items
+    - `bubblePump.js` — pool of rising bubbles
   - `controls.js` — pointer-based 3D swimming
   - `physics.js` — SDF-gradient collision sliding
-  - `bubblePump.js` — pool of rising bubble Items
   - `fpsThrottle.js` — render-loop FPS cap
 - `index.html` — markup, meta, asset & module wiring
 - `main.js` — entry point; constructs the camera, scene, and render loop

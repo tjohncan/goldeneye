@@ -1,4 +1,4 @@
-// aquarium/secrets/mountains.js — discrete mountain items in the cove.
+// aquarium/assets/mountains.js — discrete mountain items in the cove.
 //
 // Two distinct populations:
 //   - foothill: a single small green hill at angle 268° (-Z direction,

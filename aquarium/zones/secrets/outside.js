@@ -1,4 +1,4 @@
-// aquarium/secrets/outside.js — third secret zone, reached by swimming
+// aquarium/zones/secrets/outside.js — third secret zone, reached by swimming
 // through the keyhole bored through the kitchen front door (and the
 // brass escutcheon plate around it; the brass knob above the keyhole
 // is a separate decorative sphere). Inside is a concentric, vastly-
@@ -19,19 +19,19 @@ import {
   sphereSDF, boxSDF,
   cutSDF, unionSDF,
   translateSDF,
-} from '../../core/scene.js';
+} from '../../../core/scene.js';
 
 import {
   REGION_KITCHEN,
   ROOM_HALF_X as KITCHEN_HALF_X,
   ROOM_HALF_Y as KITCHEN_HALF_Y,
   ROOM_HALF_Z as KITCHEN_HALF_Z,
-} from '../zones/kitchen.js';
+} from '../kitchen.js';
 import { mouseholeAirSdf } from './mousehole.js';
 import { chamberAirSdf }   from './chamber.js';
-import { sampleClouds }    from '../clouds.js';
-import * as mountains      from './mountains.js';
-import { frameTime }       from '../../core/tracer.js';
+import { sampleClouds }    from '../../assets/clouds.js';
+import * as mountains      from '../../assets/mountains.js';
+import { frameTime }       from '../../../core/tracer.js';
 
 export const REGION_OUTSIDE = 'outside';
 
@@ -661,10 +661,10 @@ const backWindowColorFn = (lpx, lpy, lpz) => {
  * Add the outside zone to the scene. Mutates the caller-supplied kitchen
  * `door` and `room` items to carve the keyhole bore.
  *
- * @param {import('../../core/scene.js').Scene} scene
+ * @param {import('../../../core/scene.js').Scene} scene
  * @param {{
- *   room: import('../../core/scene.js').Item,
- *   door: import('../../core/scene.js').Item,
+ *   room: import('../../../core/scene.js').Item,
+ *   door: import('../../../core/scene.js').Item,
  * }} kitchen   Handles to kitchen items this zone needs to mutate.
  */
 export const addToScene = (scene, { room: kitchenRoom, door }) => {
