@@ -11,6 +11,7 @@ import {
   unionSDF, intersectionSDF, smoothUnionSDF, cutSDF,
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../core/scene.js';
+import * as r3 from '../../core/r3.js';
 
 import { BOWL_INNER_R } from '../world.js';
 
@@ -28,6 +29,18 @@ const SHIP_YAW   = -3 * Math.PI / 4;
 const SHIP_POS   = [+1.5, -1.2, 1.0];
 
 const MERMAID_OFFSET_Z = 1.85;
+
+// World position of a point given in ship-local coords (pre-rotation).
+// Each ship sub-item (and mermaid piece) anchors its own position at
+// the piece's actual world center via this helper, so its bounding
+// sphere can fit tight to the geometry — instead of being a fuzzy
+// "anywhere on the ship" sphere centered on SHIP_POS. The SDF still
+// wraps shipFrame to un-rotate the query into the primitive's
+// ship-aligned local frame.
+const shipLocalToWorld = (localPos) =>
+  r3.add(SHIP_POS, r3.rotY(r3.rotX(localPos, SHIP_PITCH), SHIP_YAW));
+
+const MERMAID_POS = shipLocalToWorld([0, 0, MERMAID_OFFSET_Z]);
 
 
 // ─────────────────────────── colorFns ───────────────────────────
@@ -155,46 +168,44 @@ export const addToScene = (scene) => {
     unionSDF(cutSDF(hullInner, hullOuter), cabinShell),
   );
 
-  // Ship/mermaid items all centered at SHIP_POS; mast extends ~4.5 from
-  // SHIP_POS in Y. Bounding radius 5 covers the whole rig.
   add({
     name:     'ship-hull',
     color:    [100, 65, 32],
     colorFn:  shipPlankColorFn,
     position: SHIP_POS,
     sdf:      shipFrame(hullCarved),
-    boundingRadius: 5,
+    boundingRadius: 2.25,
   });
 
   add({
     name:     'ship-mast',
     color:    [70, 45, 22],
-    position: SHIP_POS,
-    sdf: shipFrame(translateSDF([0, 1.9, -0.345], cylinderSDF(2.6, 0.05))),
-    boundingRadius: 5,
+    position: shipLocalToWorld([0, 1.9, -0.345]),
+    sdf:      shipFrame(cylinderSDF(2.6, 0.05)),
+    boundingRadius: 2.65,
   });
 
   add({
     name:     'ship-masthead',
     color:    [205, 165, 75],
-    position: SHIP_POS,
-    sdf: shipFrame(translateSDF([0, 4.5, -0.345], sphereSDF(0.10))),
-    boundingRadius: 5,
+    position: shipLocalToWorld([0, 4.5, -0.345]),
+    sdf:      shipFrame(sphereSDF(0.10)),
+    boundingRadius: 0.12,
   });
 
   add({
     name:     'ship-flag',
     color:    [25, 25, 25],
-    position: SHIP_POS,
-    sdf: shipFrame(translateSDF([0.30, 3.90, -0.345], boxSDF([0.25, 0.4, 0.02]))),
-    boundingRadius: 5,
+    position: shipLocalToWorld([0.30, 3.90, -0.345]),
+    sdf:      shipFrame(boxSDF([0.25, 0.4, 0.02])),
+    boundingRadius: 0.50,
   });
   add({
     name:     'ship-flag-skull',
     color:    [245, 245, 240],
-    position: SHIP_POS,
-    sdf: shipFrame(translateSDF([0.30, 4.00, -0.345], sphereSDF(0.07))),
-    boundingRadius: 5,
+    position: shipLocalToWorld([0.30, 4.00, -0.345]),
+    sdf:      shipFrame(sphereSDF(0.07)),
+    boundingRadius: 0.09,
   });
   const crossbones = unionSDF(
     rotateZSDF(+Math.PI / 4, boxSDF([0.18, 0.012, 0.05])),
@@ -203,9 +214,9 @@ export const addToScene = (scene) => {
   add({
     name:     'ship-flag-crossbones',
     color:    [245, 245, 240],
-    position: SHIP_POS,
-    sdf: shipFrame(translateSDF([0.30, 3.78, -0.345], crossbones)),
-    boundingRadius: 5,
+    position: shipLocalToWorld([0.30, 3.78, -0.345]),
+    sdf:      shipFrame(crossbones),
+    boundingRadius: 0.22,
   });
 
   const sinCut = Math.sin(0.5), cosCut = Math.cos(0.5);
@@ -216,92 +227,84 @@ export const addToScene = (scene) => {
   add({
     name:     'ship-bowsprit',
     color:    [70, 45, 22],
-    position: SHIP_POS,
-    sdf: shipFrame(translateSDF([0, 0.7, 2.10], bowspritShape)),
-    boundingRadius: 5,
+    position: shipLocalToWorld([0, 0.7, 2.10]),
+    sdf:      shipFrame(bowspritShape),
+    boundingRadius: 0.50,
   });
 
 
   // ────────── Mermaid figurehead ──────────
 
-  const mermaidBody = translateSDF([0, 0, MERMAID_OFFSET_Z],
-    smoothUnionSDF(0.15,
-      translateSDF([0, 0.12, 0.00], sphereSDF(0.115)),     // hip
-      translateSDF([0, 0.27, 0.10], sphereSDF(0.105)),     // torso
+  const mermaidBody = smoothUnionSDF(0.15,
+    translateSDF([0, 0.12, 0.00], sphereSDF(0.115)),     // hip
+    translateSDF([0, 0.27, 0.10], sphereSDF(0.105)),     // torso
 
-      // Each arm: a small joint sphere at the shoulder, a smooth capsule
-      // running back to the railing, and a hand stub at the end.
-      translateSDF([+0.10, 0.30, +0.10], sphereSDF(0.058)),
-      capsuleBetweenSDF([+0.10, 0.30, +0.10], [+0.30, 0.85, -0.25], 0.044),
-      translateSDF([+0.30, 0.85, -0.25], sphereSDF(0.044)),
+    // Each arm: a small joint sphere at the shoulder, a smooth capsule
+    // running back to the railing, and a hand stub at the end.
+    translateSDF([+0.10, 0.30, +0.10], sphereSDF(0.058)),
+    capsuleBetweenSDF([+0.10, 0.30, +0.10], [+0.30, 0.85, -0.25], 0.044),
+    translateSDF([+0.30, 0.85, -0.25], sphereSDF(0.044)),
 
-      translateSDF([-0.10, 0.30, +0.10], sphereSDF(0.058)),
-      capsuleBetweenSDF([-0.10, 0.30, +0.10], [-0.30, 0.85, -0.25], 0.044),
-      translateSDF([-0.30, 0.85, -0.25], sphereSDF(0.044)),
+    translateSDF([-0.10, 0.30, +0.10], sphereSDF(0.058)),
+    capsuleBetweenSDF([-0.10, 0.30, +0.10], [-0.30, 0.85, -0.25], 0.044),
+    translateSDF([-0.30, 0.85, -0.25], sphereSDF(0.044)),
 
-      translateSDF([0, 0.40, 0.18], sphereSDF(0.05)),
+    translateSDF([0, 0.40, 0.18], sphereSDF(0.05)),
 
-      translateSDF([0, 0.55, 0.20], sphereSDF(0.0484)),
-      translateSDF([0, 0.51, 0.27], sphereSDF(0.0484)),
-      translateSDF([0, 0.48, 0.25], sphereSDF(0.0352)),
-      translateSDF([0, 0.46, 0.27], sphereSDF(0.0220)),
-    ),
+    translateSDF([0, 0.55, 0.20], sphereSDF(0.0484)),
+    translateSDF([0, 0.51, 0.27], sphereSDF(0.0484)),
+    translateSDF([0, 0.48, 0.25], sphereSDF(0.0352)),
+    translateSDF([0, 0.46, 0.27], sphereSDF(0.0220)),
   );
   add({
     name:     'mermaid-body',
     color:    [205, 165, 75],
-    position: SHIP_POS,
+    position: MERMAID_POS,
     sdf:      shipFrame(mermaidBody),
-    boundingRadius: 3,
+    boundingRadius: 1.20,
   });
 
-  const mermaidTail = translateSDF([0, 0, MERMAID_OFFSET_Z],
-    smoothUnionSDF(0.18,
-      translateSDF([ 0,    0.00, -0.05], sphereSDF(0.115)),
-      translateSDF([+0.05, -0.12, -0.15], sphereSDF(0.105)),
-      translateSDF([-0.05, -0.25, -0.25], sphereSDF(0.095)),
-      translateSDF([+0.05, -0.40, -0.35], sphereSDF(0.085)),
-      translateSDF([-0.07, -0.55, -0.45], sphereSDF(0.070)),
-      translateSDF([-0.20, -0.65, -0.45], sphereSDF(0.040)),     // port fluke
-      translateSDF([+0.06, -0.65, -0.45], sphereSDF(0.040)),     // starboard fluke
-    ),
+  const mermaidTail = smoothUnionSDF(0.18,
+    translateSDF([ 0,    0.00, -0.05], sphereSDF(0.115)),
+    translateSDF([+0.05, -0.12, -0.15], sphereSDF(0.105)),
+    translateSDF([-0.05, -0.25, -0.25], sphereSDF(0.095)),
+    translateSDF([+0.05, -0.40, -0.35], sphereSDF(0.085)),
+    translateSDF([-0.07, -0.55, -0.45], sphereSDF(0.070)),
+    translateSDF([-0.20, -0.65, -0.45], sphereSDF(0.040)),     // port fluke
+    translateSDF([+0.06, -0.65, -0.45], sphereSDF(0.040)),     // starboard fluke
   );
   add({
     name:     'mermaid-tail',
     color:    [85, 145, 130],
-    position: SHIP_POS,
+    position: MERMAID_POS,
     sdf:      shipFrame(mermaidTail),
-    boundingRadius: 3,
+    boundingRadius: 1.10,
   });
 
-  const mermaidHair = translateSDF([0, 0, MERMAID_OFFSET_Z],
-    smoothUnionSDF(0.04,
-      translateSDF([ 0,    0.55, 0.18], sphereSDF(0.050)),
-      translateSDF([ 0,    0.50, 0.15], sphereSDF(0.045)),
-      translateSDF([-0.02, 0.45, 0.12], sphereSDF(0.040)),
-      translateSDF([+0.02, 0.40, 0.08], sphereSDF(0.035)),
-      translateSDF([ 0,    0.36, 0.05], sphereSDF(0.030)),
-    ),
+  const mermaidHair = smoothUnionSDF(0.04,
+    translateSDF([ 0,    0.55, 0.18], sphereSDF(0.050)),
+    translateSDF([ 0,    0.50, 0.15], sphereSDF(0.045)),
+    translateSDF([-0.02, 0.45, 0.12], sphereSDF(0.040)),
+    translateSDF([+0.02, 0.40, 0.08], sphereSDF(0.035)),
+    translateSDF([ 0,    0.36, 0.05], sphereSDF(0.030)),
   );
   add({
     name:     'mermaid-hair',
     color:    [165, 115, 35],
-    position: SHIP_POS,
+    position: MERMAID_POS,
     sdf:      shipFrame(mermaidHair),
-    boundingRadius: 3,
+    boundingRadius: 0.70,
   });
 
-  const mermaidTop = translateSDF([0, 0, MERMAID_OFFSET_Z],
-    unionSDF(
-      translateSDF([+0.06, 0.245, 0.22], sphereSDF(0.0515)),
-      translateSDF([-0.06, 0.245, 0.22], sphereSDF(0.0515)),
-    ),
+  const mermaidTop = unionSDF(
+    translateSDF([+0.06, 0.245, 0.22], sphereSDF(0.0515)),
+    translateSDF([-0.06, 0.245, 0.22], sphereSDF(0.0515)),
   );
   add({
     name:     'mermaid-top',
     color:    [240, 220, 175],
-    position: SHIP_POS,
+    position: MERMAID_POS,
     sdf:      shipFrame(mermaidTop),
-    boundingRadius: 3,
+    boundingRadius: 0.40,
   });
 };

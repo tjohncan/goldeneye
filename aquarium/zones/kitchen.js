@@ -283,23 +283,26 @@ export const addToScene = (scene) => {
     sdf:      planeSDF([0, -1, 0], -(ROOM_HALF_Y - 0.01)),
   });
 
-  // Potlights — multi-position cluster, can't represent with a single
-  // bounding sphere, so left without one (every kitchen ray-step
-  // re-evaluates them). Over-bright color: lambertian dims the visible
-  // underside (ndotl ≤ 0) to ambient × color. With ambient = 0.35,
-  // color = [800, 800, 800] still clamps to white at the painter, so
-  // the lights read full-bright from any angle the camera can see.
-  const potlight = (x, z) => translateSDF([x, ROOM_HALF_Y - 0.2, z], sphereSDF(0.4));
+  // Potlights — 4 corner lights at the ceiling. Item position sits at
+  // ceiling-center between the four so a single bounding sphere covers
+  // all of them; rays pointed forward or down cull the item cheaply.
+  //
+  // Over-bright color: lambertian dims the visible underside (ndotl ≤ 0)
+  // to ambient × color. With ambient = 0.35, [800, 800, 800] still
+  // clamps to white at the painter, so the lights read full-bright from
+  // any angle the camera can see.
+  const potlight = (x, z) => translateSDF([x, 0, z], sphereSDF(0.4));
   add({
     name:     'potlights',
     color:    [800, 800, 800],
-    position: [0, 0, 0],
+    position: [0, ROOM_HALF_Y - 0.2, 0],
     sdf: unionSDF(
       potlight(+8, +8),
       potlight(-8, +8),
       potlight(+8, -8),
       potlight(-8, -8),
     ),
+    boundingRadius: Math.hypot(8, 8) + 0.45,
   });
 
 
@@ -317,7 +320,7 @@ export const addToScene = (scene) => {
       tableLeg(+11, -7),
       tableLeg(-11, -7),
     ),
-    boundingRadius: 17,
+    boundingRadius: 14.5,
   });
 
   // Table runner — a thin square rotated 45° around Y so its corners point
@@ -367,7 +370,7 @@ export const addToScene = (scene) => {
       translateSDF([ 0.0, 0.0, -1.0], sphereSDF(0.50)),
       translateSDF([ 0.0, +0.9, 0.0], sphereSDF(0.45)),
     ),
-    boundingRadius: 2.5,
+    boundingRadius: 1.8,
   });
 
   // Fridge — single outer envelope with two crossed-slab carves (upper
@@ -444,7 +447,7 @@ export const addToScene = (scene) => {
       boxSDF([5, 4, 0.05]),                                          // window pane
       translateSDF([0, -4.3, 0.55], boxSDF([5.6, 0.25, 0.6])),       // sill
     ),
-    boundingRadius: 8,
+    boundingRadius: 7.5,
   });
 
   // Sink — hollow basin recessed into the counter, built as outer-box
@@ -473,7 +476,7 @@ export const addToScene = (scene) => {
     color:    [200, 205, 210],
     position: [+8, -3.2, -19.8],
     sdf:      faucet,
-    boundingRadius: 2,
+    boundingRadius: 1.45,
   });
 
   // Closed door on the OPPOSITE wall (front wall, +Z=22). Wider than the
