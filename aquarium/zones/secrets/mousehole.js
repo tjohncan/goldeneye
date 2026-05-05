@@ -159,10 +159,10 @@ const mouseholeRoomColorFn = (lpx, lpy, lpz) => {
 const bedColorFn = (lpx, lpy, lpz) => {
   if (lpy > 0.04) {
     const wrinkle = Math.sin(lpx * 28 + lpz * 21) * 0.5 + 0.5;
-    if (wrinkle > 0.55) return [205, 205, 215];
-    return [165, 168, 178];
+    if (wrinkle > 0.55) return [232, 232, 238];
+    return [210, 212, 218];
   }
-  return [140, 130, 115];
+  return [185, 175, 160];
 };
 
 // TV: dark cabinet body, slightly dusty plastic; -X-facing screen with
@@ -249,6 +249,80 @@ const remoteColorFn = (lpx, lpy, lpz) => {
 // +Z-facing face of the poster box (lpz > 0). Other faces and back side
 // render as dark backing material. Edges have a torn/jagged irregularity
 // driven by sin-noise so the posters don't look like factory rectangles.
+//
+// String-light marquee around each poster's perimeter: bulbs sit just
+// inside the torn-frame band so they silhouette against the dark
+// edge; halos extend inward into the artwork so the artwork right
+// next to each bulb reads as actively lit, falling off quadratically
+// with distance. A 1.20× baseline boost across the full front face
+// brightens the artwork modestly so the posters pop in the dim
+// mousehole — the room's lighting is keyed to +X, so poster-front
+// normals (+Z) take only the ambient term and would otherwise render
+// at 40% of source colors. Bulbs themselves return overbright values
+// that clamp to amber-white at the painter, reading as tiny searing
+// points. Both posters share identical half-extents [0.225, 0.20], so
+// the layout array is computed once and reused.
+const POSTER_HALF_X = 0.225;
+const POSTER_HALF_Y = 0.20;
+const POSTER_LIGHT_INSET = 0.012;
+const POSTER_LIGHTS = (() => {
+  const lights = [];
+  // 13 lights stacked along each vertical (left/right) side; the
+  // horizontal sides (top/bottom) take however many match that spacing.
+  const countY = 13;
+  const spacing = (2 * POSTER_HALF_Y) / countY;
+  const countX = Math.round((2 * POSTER_HALF_X) / spacing);
+  const xSpacing = (2 * POSTER_HALF_X) / countX;
+  const xL = -(POSTER_HALF_X - POSTER_LIGHT_INSET);
+  const xR = +(POSTER_HALF_X - POSTER_LIGHT_INSET);
+  const yB = -(POSTER_HALF_Y - POSTER_LIGHT_INSET);
+  const yT = +(POSTER_HALF_Y - POSTER_LIGHT_INSET);
+  for (let i = 0; i < countY; i++) {
+    const y = -POSTER_HALF_Y + (i + 0.5) * spacing;
+    lights.push([xL, y]);
+    lights.push([xR, y]);
+  }
+  for (let i = 0; i < countX; i++) {
+    const x = -POSTER_HALF_X + (i + 0.5) * xSpacing;
+    lights.push([x, yB]);
+    lights.push([x, yT]);
+  }
+  return lights;
+})();
+
+const POSTER_BULB_R2 = 0.005 * 0.005;
+const POSTER_HALO_R  = 0.025;
+const POSTER_HALO_R2 = POSTER_HALO_R * POSTER_HALO_R;
+
+// Wrap a poster's bare-artwork colorFn so its front face picks up
+// the string-light marquee. Back/sides delegate untouched.
+const withPosterLights = (artworkFn) => (lpx, lpy, lpz) => {
+  if (lpz < 0) return artworkFn(lpx, lpy, lpz);
+
+  let minD2 = Infinity;
+  for (let i = 0; i < POSTER_LIGHTS.length; i++) {
+    const dx = lpx - POSTER_LIGHTS[i][0];
+    const dy = lpy - POSTER_LIGHTS[i][1];
+    const d2 = dx * dx + dy * dy;
+    if (d2 < minD2) minD2 = d2;
+  }
+
+  if (minD2 < POSTER_BULB_R2) return [800, 700, 350];
+
+  let halo = 0;
+  if (minD2 < POSTER_HALO_R2) {
+    const t = 1 - Math.sqrt(minD2) / POSTER_HALO_R;
+    halo = t * t;
+  }
+
+  const base = artworkFn(lpx, lpy, lpz);
+  const boost = 1.20 + 1.0 * halo;
+  return [
+    base[0] * boost + 100 * halo,
+    base[1] * boost +  65 * halo,
+    base[2] * boost +  20 * halo,
+  ];
+};
 
 // Cowboy Mouse poster — silhouette of a rodent in a poncho-and-hat pose,
 // one arm extended for a lasso, the other holding a revolver, set against
@@ -538,7 +612,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
   const PILLOW_HALF = [0.07, 0.025, 0.07];
   add({
     name:     'mousehole-pillow',
-    color:    [205, 200, 200],
+    color:    [249, 248, 248],
     position: [BED_POS[0] - BED_HALF[0] + PILLOW_HALF[0] + 0.02, BED_POS[1] + BED_HALF[1] + PILLOW_HALF[1], BED_POS[2]],
     sdf:      boxSDF(PILLOW_HALF),
     boundingRadius: Math.hypot(PILLOW_HALF[0], PILLOW_HALF[1], PILLOW_HALF[2]) + 0.02,
@@ -604,7 +678,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
   ];
   add({
     name:     'mousehole-plate',
-    color:    [235, 232, 222],
+    color:    [254, 253, 251],
     position: PLATE_POS,
     sdf:      cylinderSDF(PLATE_HALF_Y, PLATE_R),
     boundingRadius: PLATE_R + 0.02,
@@ -717,7 +791,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
   add({
     name:     'mousehole-poster-cowboy',
     color:    [125, 90, 55],
-    colorFn:  cowboyPosterColorFn,
+    colorFn:  withPosterLights(cowboyPosterColorFn),
     position: [-27.0, POSTER_Y, POSTER_Z],
     sdf:      boxSDF(POSTER_HALF),
     boundingRadius: Math.hypot(POSTER_HALF[0], POSTER_HALF[1], POSTER_HALF[2]) + 0.02,
@@ -725,7 +799,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
   add({
     name:     'mousehole-poster-starlet',
     color:    [185, 115, 135],
-    colorFn:  starletPosterColorFn,
+    colorFn:  withPosterLights(starletPosterColorFn),
     position: [-26.0, POSTER_Y, POSTER_Z],
     sdf:      boxSDF(POSTER_HALF),
     boundingRadius: Math.hypot(POSTER_HALF[0], POSTER_HALF[1], POSTER_HALF[2]) + 0.02,
