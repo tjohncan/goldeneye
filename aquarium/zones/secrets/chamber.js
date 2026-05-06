@@ -292,28 +292,147 @@ const marqueeColorFn = (lpx, lpy, lpz) => {
 
 // ────────────────────────── colorFns ──────────────────────────
 
+// Random rainbow sparks on the chamber's solid surfaces (floor, ceiling,
+// back wall, east wall, west wall). The +Z face and the pipe/torus tube
+// interiors — also surfaced by the invertSDF chamber-room SDF — are
+// excluded so the openings read as openings.
+//
+// Stateless: each spark's params (face, surface position, color) are
+// hashed from its discrete spawn epoch, so there's no per-frame state
+// to manage — same trick as clouds.js. Each chamber-surface hit iterates
+// the currently-active epochs and accumulates per-spark contribution
+// with quadratic radial falloff and linear temporal fade. Active spark
+// count = SPARK_LIFE / SPARK_INTERVAL (both in seconds).
+const SPARK_INTERVAL = 0.004;   // s, between spawns
+const SPARK_LIFE     = 0.221;   // s, per spark
+const SPARK_RADIUS   = 0.088;   // world units, surface footprint
+const SPARK_LOOKBACK = Math.ceil(SPARK_LIFE / SPARK_INTERVAL);
+
+// Over-bright primaries — chamber ambient is 0.30 and most spark-painted
+// face normals get ndotl ≤ 0, so brightness sits near ambient. Each
+// channel multiplied by 0.30 lands at the painter's clamp on the dominant
+// hue and stays low on the others, so sparks read as their pure color
+// rather than washing toward white.
+const SPARK_COLORS = [
+  [800,  80,  80],   // red
+  [800, 350,  60],   // orange
+  [800, 800,  80],   // yellow
+  [ 80, 800,  80],   // green
+  [ 60, 800, 800],   // cyan
+  [ 80,  80, 800],   // blue
+  [400,  60, 800],   // purple
+  [800,  80, 400],   // magenta
+];
+const NUM_SPARK_FACES = 5;
+
+const sparkHash01 = (epoch, channel) => {
+  const x = Math.sin(epoch * 12.9898 + channel * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+// True iff lp lies on one of the chamber's spark-painted faces.
+const SPARK_FACE_TOL = 0.05;
+const isOnSparkFace = (lpx, lpy, lpz) =>
+  Math.abs(lpy - CHAMBER_FLOOR_Y) < SPARK_FACE_TOL ||
+  Math.abs(lpy - CHAMBER_CEIL_Y)  < SPARK_FACE_TOL ||
+  Math.abs(lpz - CHAMBER_BACK_Z)  < SPARK_FACE_TOL ||
+  Math.abs(lpx - (SUN_X + CHAMBER_HALF_X)) < SPARK_FACE_TOL ||
+  Math.abs(lpx - (SUN_X - CHAMBER_HALF_X)) < SPARK_FACE_TOL;
+
+// Module-level scratch buffer for the accumulated [r, g, b] spark color —
+// caller consumes immediately, no allocation per chamber-wall hit.
+const _sparkOut = [0, 0, 0];
+
+const accumulateSparks = (lpx, lpy, lpz, t) => {
+  const currentEpoch = Math.floor(t / SPARK_INTERVAL);
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < SPARK_LOOKBACK; i++) {
+    const epoch = currentEpoch - i;
+    const age = t - epoch * SPARK_INTERVAL;
+    if (age >= SPARK_LIFE) break;
+
+    const faceIdx = Math.floor(sparkHash01(epoch, 0) * NUM_SPARK_FACES);
+    const u = sparkHash01(epoch, 1);
+    const v = sparkHash01(epoch, 2);
+    let sx, sy, sz;
+    if (faceIdx === 0) {                                      // floor
+      sx = SUN_X - CHAMBER_HALF_X + u * 2 * CHAMBER_HALF_X;
+      sy = CHAMBER_FLOOR_Y;
+      sz = CHAMBER_CENTER_Z - CHAMBER_HALF_Z + v * 2 * CHAMBER_HALF_Z;
+    } else if (faceIdx === 1) {                               // ceiling
+      sx = SUN_X - CHAMBER_HALF_X + u * 2 * CHAMBER_HALF_X;
+      sy = CHAMBER_CEIL_Y;
+      sz = CHAMBER_CENTER_Z - CHAMBER_HALF_Z + v * 2 * CHAMBER_HALF_Z;
+    } else if (faceIdx === 2) {                               // back wall
+      sx = SUN_X - CHAMBER_HALF_X + u * 2 * CHAMBER_HALF_X;
+      sy = CHAMBER_FLOOR_Y + v * 2 * CHAMBER_HALF_Y;
+      sz = CHAMBER_BACK_Z;
+    } else if (faceIdx === 3) {                               // east wall
+      sx = SUN_X + CHAMBER_HALF_X;
+      sy = CHAMBER_FLOOR_Y + u * 2 * CHAMBER_HALF_Y;
+      sz = CHAMBER_CENTER_Z - CHAMBER_HALF_Z + v * 2 * CHAMBER_HALF_Z;
+    } else {                                                  // west wall
+      sx = SUN_X - CHAMBER_HALF_X;
+      sy = CHAMBER_FLOOR_Y + u * 2 * CHAMBER_HALF_Y;
+      sz = CHAMBER_CENTER_Z - CHAMBER_HALF_Z + v * 2 * CHAMBER_HALF_Z;
+    }
+
+    const dx = lpx - sx, dy = lpy - sy, dz = lpz - sz;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= SPARK_RADIUS * SPARK_RADIUS) continue;
+
+    const radial = 1 - Math.sqrt(d2) / SPARK_RADIUS;
+    const fade   = 1 - age / SPARK_LIFE;
+    const intensity = radial * radial * fade;
+
+    const c = SPARK_COLORS[Math.floor(sparkHash01(epoch, 3) * SPARK_COLORS.length)];
+    r += c[0] * intensity;
+    g += c[1] * intensity;
+    b += c[2] * intensity;
+  }
+  _sparkOut[0] = r;
+  _sparkOut[1] = g;
+  _sparkOut[2] = b;
+  return _sparkOut;
+};
+
 const chamberRoomColorFn = (lpx, lpy, lpz) => {
-  // Floor band — deep purple-dark
-  if (lpy < CHAMBER_FLOOR_Y + 0.10) return [22, 14, 30];
-  // Ceiling band — even darker, voidy
-  if (lpy > CHAMBER_CEIL_Y - 0.10) return [10, 8, 18];
-  // Walls — abstract dark plum with a faint diagonal lattice
-  const lattice = Math.sin((lpx + lpz) * 14) * Math.sin((lpx - lpz) * 14);
-  if (lattice > 0.85) return [70, 45, 110];                            // lit lattice node
-  if (lattice > 0.65) return [50, 30, 80];
-  return [38, 24, 60];
+  let r, g, b;
+  if (lpy < CHAMBER_FLOOR_Y + 0.10) {
+    // Floor band — deep purple-dark.
+    r = 22; g = 14; b = 30;
+  } else if (lpy > CHAMBER_CEIL_Y - 0.10) {
+    // Ceiling band — darker, voidy.
+    r = 10; g = 8; b = 18;
+  } else {
+    // Walls — dark plum with a faint diagonal lattice; brighter where
+    // the two sin waves co-align (the lit lattice nodes).
+    const lattice = Math.sin((lpx + lpz) * 14) * Math.sin((lpx - lpz) * 14);
+    if (lattice > 0.85)      { r = 70; g = 45; b = 110; }
+    else if (lattice > 0.65) { r = 50; g = 30; b =  80; }
+    else                     { r = 38; g = 24; b =  60; }
+  }
+
+  if (isOnSparkFace(lpx, lpy, lpz)) {
+    const sparks = accumulateSparks(lpx, lpy, lpz, frameTime / 1000);
+    r += sparks[0];
+    g += sparks[1];
+    b += sparks[2];
+  }
+
+  return [r, g, b];
 };
 
 // Whole-chamber psychedelic wash — a translucent box filling the
-// chamber air with a slowly hue-cycling color. Three independent
-// frequencies on R/G/B with phase offsets, so the wash never settles
-// on a static color. Pulses through the entire chamber atmosphere
-// like the gyroid is leaking light into the room.
+// chamber air with a hue-cycling color. Three independent frequencies
+// on R/G/B with phase offsets, so the wash never settles on a static
+// color. Pulses through the entire chamber atmosphere like the gyroid
+// is leaking light into the room.
 const chamberGlowColorFn = (lpx, lpy, lpz) => {
   const t = frameTime / 1000;
-  const r = 70 + 90 * Math.sin(t * 0.6);
-  const g = 70 + 90 * Math.sin(t * 0.85 + 2.1);
-  const b = 90 + 90 * Math.sin(t * 1.05 + 4.3);
+  const r = 70 + 90 * Math.sin(t * 1.8);
+  const g = 70 + 90 * Math.sin(t * 2.55 + 2.1);
+  const b = 90 + 90 * Math.sin(t * 3.15 + 4.3);
   return [r, g, b];
 };
 
