@@ -99,7 +99,7 @@ export const addToScene = (scene) => {
       translateSDF([ 0.5,  0.2, 0.1], sphereSDF(0.5)),
       translateSDF([-0.4, -0.1, 0.3], sphereSDF(0.55)),
     ),
-    boundingRadius: 1.5,
+    boundingRadius: 1.15,
   });
   add({
     name:     'plant-tall',
@@ -111,7 +111,7 @@ export const addToScene = (scene) => {
       translateSDF([ 0.1, 0.55, 0.05], sphereSDF(0.18)),
       translateSDF([-0.1, 0.25, 0.05], sphereSDF(0.20)),
     ),
-    boundingRadius: 1.5,
+    boundingRadius: 1.1,
   });
   add({
     name:     'plant-small',
@@ -136,7 +136,7 @@ export const addToScene = (scene) => {
       sphereSDF(0.4),
       translateSDF([0.3, 0.05, 0], sphereSDF(0.3)),
     ),
-    boundingRadius: 0.8,
+    boundingRadius: 0.65,
   });
 
 
@@ -160,8 +160,8 @@ export const addToScene = (scene) => {
 
   const doorCutout     = translateSDF([0, 1.15, -0.04],     boxSDF([0.253, 0.288, 0.540]));
   const trapDoorCutout = translateSDF([0, 0.46, -0.69],     boxSDF([0.253, 0.575, 0.253]));
-  const portholePort   = translateSDF([-0.575, -0.23, 0.40], sphereSDF(0.276));
-  const portholeStbd   = translateSDF([+0.575, -0.23, 0.40], sphereSDF(0.276));
+  const portholePort   = translateSDF([-0.575, -0.23, 0.40], sphereSDF(0.321));
+  const portholeStbd   = translateSDF([+0.575, -0.23, 0.40], sphereSDF(0.321));
 
   const hullCarved = cutSDF(
     unionSDF(doorCutout, trapDoorCutout, portholePort, portholeStbd),
