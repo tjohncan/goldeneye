@@ -30,13 +30,22 @@
 // but coarser cull, or (b) sample more directions, e.g. 14-vertex
 // Fibonacci sphere — better angular coverage at modest extra cost.
 //
-// Temporal safety: re-sampling each iteration plus per-frame displacement
+// Temporal safety: per-iteration re-probing plus per-frame displacement
 // staying under fishRadius means any region the fish *will* enter next
 // frame was probed this frame, so no "hop across a boundary" pathology.
 // With current params (speed 1.44, dt clamped to 0.1 in controls.js,
-// fishRadius 0.2), worst-case displacement ≈ 0.144 < 0.2. Region partitions
-// must be clean (regionFn a deterministic function of position) for this to
-// hold; design new regions with that constraint in mind.
+// fishRadius 0.2), the kitchen's per-frame displacement ~0.144 sits
+// safely below fishRadius. The cove's speedMul=10 pushes peak
+// displacement to 1.44 — well above — but the cove stays safe via a
+// different invariant: the house-exterior wall (~9 units thick)
+// buffers the only directly-traversable boundary into another
+// region's domain, the cove dome at r≈1000 walls off the rest, and
+// the sun-teleport handles the upper limit at the controls layer
+// before any boundary cross can fire. Region partitions must be clean
+// (regionFn a deterministic function of position) for either invariant
+// to hold; design new regions with that constraint in mind, and
+// either keep peak displacement under fishRadius or buffer the
+// boundary with wall thickness > displacement.
 
 /** @typedef {import('../core/r3.js').Vec3} Vec3 */
 /** @typedef {import('../core/scene.js').Scene} Scene */
@@ -46,6 +55,21 @@ import { sdfGrad } from '../core/scene.js';
 
 const NORMAL_EPS     = 0.001;
 const MAX_ITERATIONS = 4;
+
+/** Default fish (collision) radius. Module-level so MIN_TRAVERSAL_OVERLAP
+ * tracks it. */
+export const FISH_RADIUS = 0.2;
+
+/** Minimum overlap required between a cut tool and the volume it carves
+ *  through, when the carve must permit a fish-sized mover to traverse it.
+ *  cutSDF (core/scene.js) returns the non-negative max(-tool, base) at
+ *  shared boundaries, so without this overlap the SDF dip in the carve
+ *  region (depth = overlap / 2 at minimum) can fall below fishRadius and
+ *  push the fish back at the carve entrance. Carve sites pad past this
+ *  number — typically by 0.1–0.6 — for safety margin and rendering
+ *  cleanliness; reference this constant in their derivations so any
+ *  fishRadius tuning propagates. */
+export const MIN_TRAVERSAL_OVERLAP = 2 * FISH_RADIUS;
 
 // Probe directions for the per-iteration region sample (center + 6 axis-
 // aligned). Multiplied by fishRadius at sample time.
@@ -66,7 +90,7 @@ const PROBE_OFFSETS = [
  * }} opts
  * @returns {{ update: () => void }}
  */
-export const bindPhysics = ({ camera, scene, fishRadius = 0.2 }) => {
+export const bindPhysics = ({ camera, scene, fishRadius = FISH_RADIUS }) => {
   // Reusable scratch — region keys touched by the fish this iteration.
   // At most 7 entries (one per probe), but typically 1-2 in steady state.
   const touchedRegions = [];
@@ -105,10 +129,11 @@ export const bindPhysics = ({ camera, scene, fishRadius = 0.2 }) => {
           if (item.collides === false) continue;   // fish swims through
           if (nRegions > 0 && item.regionKey != null) {
             const rk = item.regionKey;
+            const set = item._regionKeySet;
             let inRegion = false;
-            if (Array.isArray(rk)) {
-              for (let j = 0; j < nRegions && !inRegion; j++) {
-                if (rk.indexOf(touchedRegions[j]) >= 0) inRegion = true;
+            if (set !== undefined) {
+              for (let j = 0; j < nRegions; j++) {
+                if (set.has(touchedRegions[j])) { inRegion = true; break; }
               }
             } else {
               for (let j = 0; j < nRegions; j++) {
