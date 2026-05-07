@@ -92,7 +92,9 @@ export const bindControls = ({
 
   // Bind to window so the entire page is the touchpad — clicks outside the
   // visible viewing circle still steer; their position is clamped to ±1
-  // (extreme edge of the disk) in the update loop.
+  // (extreme edge of the disk) in the update loop. Contextmenu also goes
+  // on window: a right-click + drag that releases off the disk would
+  // otherwise pop the OS context menu mid-reverse-thrust.
   window.addEventListener('pointerdown',   onDown);
   window.addEventListener('pointermove',   onMove);
   window.addEventListener('pointerup',     onUp);
