@@ -5,9 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
   <meta name="color-scheme" content="dark">
   <meta name="theme-color" content="#000000">
-  <!-- style-src 'unsafe-inline' is load-bearing: Painter.paint sets cell.style.backgroundColor every frame.
-       frame-ancestors is omitted; meta-tag form isn't honored by browsers, so it's a deployment-header concern. -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; manifest-src 'self'; base-uri 'self'; form-action 'none'; object-src 'none';">
+  <!-- style-src 'unsafe-inline' is load-bearing: painter.js's ensureStyles() injects
+       a dynamic <style> element at construction. Per-frame element.style.x = '...'
+       writes do NOT require it (CSP allows style-property writes via JS regardless of
+       style-src). frame-ancestors is omitted; meta-tag form isn't honored by browsers,
+       so it's a deployment-header concern. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self'; manifest-src 'self'; connect-src 'none'; worker-src 'none'; base-uri 'self'; form-action 'none'; object-src 'none';">
   <title>goldeneye</title>
   <meta name="description" content="First-person-shoot for the stars! fisheye renderer in JavaScript: SDFs sphere-traced under lambertian shading, painted onto a CSS grid of div circles. Aquarium demonstration of a re-usable core graphics engine.">
   <meta property="og:title" content="goldeneye">
