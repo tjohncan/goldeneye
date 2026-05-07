@@ -201,6 +201,24 @@ const bakeScreen = (lensPoints, W, H) => {
     ((1 - y) / 2) * H,
   ]);
 
+  // Bin lens points by integer (col, row) of their projection. With
+  // NEIGHBORHOOD_RADIUS ≈ 0.5, a cell at (cx, cy) only considers lens
+  // points with |proj − cell| ≤ 0.5 on each axis — i.e., points whose
+  // bin is (cx-1..cx) on each axis. Each cell reads from up to 4 bins
+  // (~N / ((W+1)(H+1)) entries each on average) instead of the full
+  // N=lens-points list, turning the bake from O(W·H·N) into roughly
+  // O(W·H + N).
+  const binCols = W + 1;
+  const binRows = H + 1;
+  const bins    = new Array(binCols * binRows);
+  for (let b = 0; b < bins.length; b++) bins[b] = [];
+  for (let i = 0; i < projected.length; i++) {
+    const px = projected[i][0], py = projected[i][1];
+    const cb = Math.floor(px), rb = Math.floor(py);
+    if (cb < 0 || cb > W || rb < 0 || rb > H) continue;
+    bins[cb * binRows + rb].push(i);
+  }
+
   /** @type {ScreenCell[]} */
   const activeCells = [];
   /** Per-cell scratch list of [lensIdx, normalizedWeight], flattened later. */
@@ -216,16 +234,27 @@ const bakeScreen = (lensPoints, W, H) => {
       /** @type {Array<[number, number]>} */
       const neighborhood = [];
       let total = 0;
-      for (let i = 0; i < projected.length; i++) {
-        const [px, py] = projected[i];
-        const dx = Math.abs(cx - px);
-        const dy = Math.abs(cy - py);
-        if (dx > NEIGHBORHOOD_RADIUS || dy > NEIGHBORHOOD_RADIUS) continue;
-        const t = CLOSENESS_ALPHA - Math.sqrt(dx * dx + dy * dy);
-        if (t <= 0) continue;
-        const score = Math.pow(t, CLOSENESS_BETA);
-        total += score;
-        neighborhood.push([i, score]);
+      const bcxLo = cx > 0 ? cx - 1 : 0;
+      const bcxHi = cx < W ? cx     : W;
+      const bcyLo = cy > 0 ? cy - 1 : 0;
+      const bcyHi = cy < H ? cy     : H;
+      for (let bcx = bcxLo; bcx <= bcxHi; bcx++) {
+        const colBase = bcx * binRows;
+        for (let bcy = bcyLo; bcy <= bcyHi; bcy++) {
+          const bin = bins[colBase + bcy];
+          for (let k = 0; k < bin.length; k++) {
+            const i = bin[k];
+            const px = projected[i][0], py = projected[i][1];
+            const dx = Math.abs(cx - px);
+            const dy = Math.abs(cy - py);
+            if (dx > NEIGHBORHOOD_RADIUS || dy > NEIGHBORHOOD_RADIUS) continue;
+            const t = CLOSENESS_ALPHA - Math.sqrt(dx * dx + dy * dy);
+            if (t <= 0) continue;
+            const score = Math.pow(t, CLOSENESS_BETA);
+            total += score;
+            neighborhood.push([i, score]);
+          }
+        }
       }
 
       if (total < 1e-5) continue;
