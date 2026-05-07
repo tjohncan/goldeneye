@@ -19,14 +19,20 @@ export const REGION_BOWL = 'bowl';
 
 const SAND_Y = -1.5;
 
-// Ship orientation. shipPlankColorFn applies the same rotation to its query
-// point — the tracer hands the colorFn a translation-local (but rotation-
-// untouched) point, since rotation lives inside the SDF. Without this,
-// plank stripes would track world-Y instead of deck-Y and tilt off the deck
-// plane as the ship pitches.
+// Ship orientation. SHIP_CY/SY/CX/SX are pre-baked so both the SDF
+// wrapper (shipFrame, in addToScene below) and the plank colorFn
+// (shipPlankColorFn) use the same trig — if SHIP_PITCH or SHIP_YAW
+// changes, both update through the constants. The rotation ORDER
+// (rotateY ∘ rotateX) is hand-mirrored in both spots; if that ever
+// changes, BOTH expressions need to update together.
 const SHIP_PITCH = -25 * Math.PI / 180;
 const SHIP_YAW   = -3 * Math.PI / 4;
 const SHIP_POS   = [+1.5, -1.2, 1.0];
+
+const SHIP_CY = Math.cos(SHIP_YAW);
+const SHIP_SY = Math.sin(SHIP_YAW);
+const SHIP_CX = Math.cos(SHIP_PITCH);
+const SHIP_SX = Math.sin(SHIP_PITCH);
 
 const MERMAID_OFFSET_Z = 1.85;
 
@@ -46,13 +52,11 @@ const MERMAID_POS = shipLocalToWorld([0, 0, MERMAID_OFFSET_Z]);
 // ─────────────────────────── colorFns ───────────────────────────
 
 const shipPlankColorFn = (lpx, lpy, lpz) => {
-  // Mirror shipFrame's query-point transformation (rotateYSDF(SHIP_YAW, ·)
-  // then rotateXSDF(SHIP_PITCH, ·)) so we sample stripes in deck-local Y.
-  const cy = Math.cos(SHIP_YAW), sy = Math.sin(SHIP_YAW);
-  const x1 = lpx * cy - lpz * sy;
-  const z1 = lpx * sy + lpz * cy;
-  const cx = Math.cos(SHIP_PITCH), sx = Math.sin(SHIP_PITCH);
-  const deckY = lpy * cx + z1 * sx;
+  // Stripes in deck-local Y, not world-Y — so they read flat across
+  // the planks regardless of the ship's pitch. Math mirrors shipFrame's
+  // rotateY ∘ rotateX query transform via the shared trig constants.
+  const z1 = lpx * SHIP_SY + lpz * SHIP_CY;
+  const deckY = lpy * SHIP_CX + z1 * SHIP_SX;
   const stripe = (Math.floor(deckY / 0.16)) & 1;
   return stripe === 0 ? [115, 75, 38] : [85, 55, 26];
 };
@@ -111,14 +115,16 @@ export const addToScene = (scene) => {
       translateSDF([ 0.1, 0.55, 0.05], sphereSDF(0.18)),
       translateSDF([-0.1, 0.25, 0.05], sphereSDF(0.20)),
     ),
-    boundingRadius: 1.1,
+    // Cylinder stem ±0.1 X/Z × ±0.8 Y, plus sphere foliage stacking
+    // up to item-local Y +1.07 with X reach ±0.30, Z reach ±0.25.
+    boundingBox: [0.30, 1.07, 0.25],
   });
   add({
     name:     'plant-small',
     color:    [90, 170, 90],
     position: [1, -1, -4],
     sdf:      capsuleSDF(0.4, 0.1),
-    boundingRadius: 0.6,
+    boundingBox: [0.10, 0.50, 0.10],
   });
   add({
     name:     'chest',
@@ -142,7 +148,18 @@ export const addToScene = (scene) => {
 
   // ────────── Pirate ship ──────────
 
-  const shipFrame = (sdf) => rotateYSDF(SHIP_YAW, rotateXSDF(SHIP_PITCH, sdf));
+  // Inline rotateY ∘ rotateX into one closure so the per-step hot path
+  // is straight arithmetic + tail call to the primitive — no helper
+  // round-trip, no scratch buffer. Math mirrored in shipPlankColorFn
+  // above (both consume the same SHIP_CY/SY/CX/SX constants).
+  const shipFrame = (sdf) => (px, py, pz) => {
+    const z1 = px * SHIP_SY + pz * SHIP_CY;
+    return sdf(
+      px * SHIP_CY - pz * SHIP_SY,
+      py * SHIP_CX + z1 * SHIP_SX,
+      -py * SHIP_SX + z1 * SHIP_CX,
+    );
+  };
 
   const hullOuter = smoothUnionSDF(0.10,
     translateSDF([0, 0.000, -0.40], boxSDF([0.575, 0.805, 1.25])),
