@@ -29,15 +29,32 @@ import { ROOM_HALF_X, ROOM_HALF_Y, ROOM_HALF_Z } from './zones/kitchen.js';
 import * as mousehole from './zones/secrets/mousehole.js';
 import * as chamber   from './zones/secrets/chamber.js';
 import * as outside   from './zones/secrets/outside.js';
+import { createBubblePump } from './assets/bubblePump.js';
 
 /** Y-coordinate of the water surface (= bowl rim). */
 export const WATER_SURFACE_Y = 6.25;
 
-/** Y-coordinate above which the camera teleports — set in the outside
- * zone (the cove sun sits high in the dome) and consumed by main.js.
- * Re-exported here so main.js doesn't reach into secret modules
- * directly. */
-export { SUN_TRIGGER_Y } from './zones/secrets/outside.js';
+/** Spawn pose. Position inside the bowl, off-center; looking at the
+ * bowl's center origin — picks up sand, plants, the ship, and the
+ * surrounding kitchen through the translucent bowl glass. `up` is a
+ * hint that pins the camera's roll: world-up here, so the horizon
+ * reads level. */
+const SPAWN = {
+  position: [-4, 0, 4],
+  lookAt:   [0, 0, -7],
+  up:       [0, 1, 0],
+};
+
+/** Teleport pose + trigger. When the camera's Y rises above triggerY
+ * (set in the outside zone — the cove sun sits high in the dome),
+ * main warps the camera to this pose. `triggerY` lives on the teleport
+ * object so the entry point doesn't have to import it separately. */
+const TELEPORT = {
+  position: [10.5, 4.2, -25.4],
+  lookAt:   [10.5, 4.2, -26.5],
+  up:       [0, 1, 0],
+  triggerY: outside.SUN_TRIGGER_Y,
+};
 
 /** Lighting: sun straight up, gentle ambient. Background is black —
  * silhouette-edge rays that exhaust MAX_STEPS without fully accumulating
@@ -185,13 +202,19 @@ const VISIBLE_REGIONS = {
  * Build the kitchen + fish-bowl scene. Region-spanning items are
  * registered here; per-region items are added by their zone modules.
  *
- * Returns the scene plus a `speedMul(pos)` callback for the controls
- * layer — kept off the Scene type itself, since the tracer/physics
- * have no use for it and shouldn't have to ignore an extra field.
+ * Returns the scene plus the per-region speed multiplier callback for
+ * the controls layer (kept off the Scene type, since tracer/physics
+ * have no use for it), the spawn pose, the teleport pose + trigger,
+ * and a list of per-frame update callbacks for any scene-owned
+ * animators (e.g. bubble pump) — so the main entry point doesn't have
+ * to know any scene-specific coordinates, thresholds, or animators.
  *
  * @returns {{
  *   scene:    import('../core/scene.js').Scene,
  *   speedMul: (pos: import('../core/r3.js').Vec3) => number,
+ *   spawn:    { position: import('../core/r3.js').Vec3, lookAt: import('../core/r3.js').Vec3, up: import('../core/r3.js').Vec3 },
+ *   teleport: { position: import('../core/r3.js').Vec3, lookAt: import('../core/r3.js').Vec3, up: import('../core/r3.js').Vec3, triggerY: number },
+ *   perFrameUpdates: Array<(timeMs: number) => void>,
  * }}
  */
 export const createWorld = () => {
@@ -224,6 +247,22 @@ export const createWorld = () => {
   chamber.addToScene(scene, kitchenHandles);
   outside.addToScene(scene, kitchenHandles);
 
+  // Scene-owned animators register their items into the scene before
+  // first trace and expose a per-frame update; main hands those updates
+  // through its tick loop without needing to know what they are.
+  const bubblePump = createBubblePump({
+    scene,
+    position:    [1, -1.4, -2.5],
+    surfaceY:    WATER_SURFACE_Y,
+    spawnPerSec: 1.5,
+  });
+
   const speedMul = ([px, py, pz]) => SPEED_MUL_BY_REGION[regionFn(px, py, pz)] ?? 1;
-  return { scene, speedMul };
+  return {
+    scene,
+    speedMul,
+    spawn:    SPAWN,
+    teleport: TELEPORT,
+    perFrameUpdates: [bubblePump.update],
+  };
 };

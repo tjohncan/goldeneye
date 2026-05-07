@@ -36,13 +36,19 @@ const ensureStyles = () => {
 export class Painter {
   /**
    * @param {{
-   *   host: HTMLElement,
+   *   host:    HTMLElement,
    *   screenW: number,
    *   screenH: number,
-   *   shimmer?: number,    // per-cell per-frame RGB jitter strength (0..1, try 0.04)
+   *   cells:   ScreenCell[],   // active cells from camera.screen.activeCells
+   *                            // — pinned at construction so the hot path
+   *                            // can pre-resolve cell.style references.
+   *                            // A Painter is therefore tied to one Camera
+   *                            // (or one lens shape) for its lifetime;
+   *                            // construct a new Painter for a new lens.
+   *   shimmer?: number,        // per-cell per-frame RGB jitter strength (0..1, try 0.04)
    * }} opts
    */
-  constructor({ host, screenW, screenH, shimmer = 0 }) {
+  constructor({ host, screenW, screenH, cells, shimmer = 0 }) {
     ensureStyles();
     this.host = host;
     this.screenW = screenW;
@@ -54,9 +60,12 @@ export class Painter {
     host.style.gridTemplateRows = `repeat(${screenH + 1}, 1fr)`;
     host.replaceChildren();
 
-    /** @type {HTMLDivElement[][]} indexed [cx][cy] */
-    this.cells = [];
-    for (let cx = 0; cx <= screenW; cx++) this.cells[cx] = [];
+    // Build the [cx][cy] grid as constructor-local scratch — used only to
+    // resolve cell.style refs for the active cells, then discarded along
+    // with the rest of the constructor frame.
+    /** @type {HTMLDivElement[][]} */
+    const grid = [];
+    for (let cx = 0; cx <= screenW; cx++) grid[cx] = [];
 
     const frag = document.createDocumentFragment();
     for (let cy = 0; cy <= screenH; cy++) {
@@ -66,19 +75,21 @@ export class Painter {
         cell.style.gridColumn = `${cx + 1}`;
         cell.style.gridRow = `${cy + 1}`;
         frag.appendChild(cell);
-        this.cells[cx][cy] = cell;
+        grid[cx][cy] = cell;
       }
     }
     host.appendChild(frag);
 
-    // Cache of `cell.style` refs aligned with the activeCells array a
-    // caller passes to paint() — built lazily on first paint, reused
-    // every frame after. Lets the hot loop do `_styles[i].backgroundColor
-    // = ...` instead of double-indirection through the [cx][cy] grid.
-    /** @type {CSSStyleDeclaration[] | null} */
-    this._styles = null;
-    /** @type {ScreenCell[] | null} */
-    this._stylesFor = null;
+    // Pre-resolve cell.style refs aligned with the active-cells array.
+    // The hot paint loop reads `_styles[i].backgroundColor = ...` without
+    // any indirection through the grid, and the grid itself goes out of
+    // scope at constructor exit — only the active subset of div refs
+    // (held by `_styles`) survives.
+    /** @type {CSSStyleDeclaration[]} */
+    this._styles = new Array(cells.length);
+    for (let i = 0; i < cells.length; i++) {
+      this._styles[i] = grid[cells[i][0]][cells[i][1]].style;
+    }
   }
 
   /**
@@ -86,23 +97,17 @@ export class Painter {
    * RGB jitter) if enabled. Inactive cells stay at their previous color
    * (typically transparent → grid background shows through).
    *
-   * @param {{ cells: ScreenCell[], colors: Float32Array }} signal  colors is
-   *        a flat [r0,g0,b0,r1,g1,b1,...] aligned with `cells`.
+   * Only `colors` is read. The `cells` field of the signal is ignored —
+   * the active-cells layout is fixed at construction.
+   *
+   * @param {{ colors: Float32Array }} signal  colors is a flat
+   *        [r0,g0,b0,r1,g1,b1,...], one triple per active cell, aligned
+   *        with the `cells` array passed to the Painter constructor.
    */
-  paint({ cells, colors }) {
-    if (this._stylesFor !== cells) {
-      const cells2D = this.cells;
-      const styles = new Array(cells.length);
-      for (let i = 0; i < cells.length; i++) {
-        styles[i] = cells2D[cells[i][0]][cells[i][1]].style;
-      }
-      this._styles = styles;
-      this._stylesFor = cells;
-    }
-
+  paint({ colors }) {
     const sh = this.shimmer;
     const styles = this._styles;
-    const cellsLen = cells.length;
+    const cellsLen = styles.length;
 
     for (let i = 0; i < cellsLen; i++) {
       const ci = i * 3;
