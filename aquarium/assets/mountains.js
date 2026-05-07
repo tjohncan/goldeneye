@@ -1,38 +1,31 @@
 // aquarium/assets/mountains.js — discrete mountain items in the cove.
 //
-// Two distinct populations:
-//   - foothill: a single small green hill at angle 268° (-Z direction,
-//     the kitchen-window view direction), fully inside the dome and
-//     not constrained to its surface. Mirrors the painted hill on the
-//     kitchen window so a player looking out from the back of the
-//     shack sees a real-geometry version of the indoor painting.
-//   - main range: 4 large mountains arranged across the +Z arc on the
-//     OPPOSITE side of the cove from the foothill — the "wall" side
-//     that should be visible across the water. Each mountain's peak
-//     extends PAST the dome's inner shell so the silhouette continues
-//     through the bowl glass.
+// Three mountains, all on the LAND side (-Z hemisphere), all anchored
+// on the shack plateau:
+//   - foothill at 268° (kitchen-window view direction): a small green
+//     hill, fully inside the dome and not constrained to its surface.
+//     Mirrors the painted hill on the kitchen window so a player
+//     looking out the back of the shack sees a real-geometry version
+//     of the indoor painting.
+//   - main range at 220° and 307°: snow-capped mountains, peaks
+//     extending PAST the dome's inner shell so each silhouette
+//     continues through the bowl glass.
 //
-// Mountain bases anchor on whatever ground sits beneath them: sea
-// floor for items in the +Z (cove) hemisphere, plateau for any in the
-// -Z hemisphere. With the main range in +Z, those bases sit on the
-// deep seafloor so the mountains read as islands rising out of the
-// cove water.
+// Plateau elevation is owned by outside.js (the cove's authority on
+// vertical layout) and threaded in via addToScene's options arg —
+// keeps a single source of truth for ground Y and avoids reaching
+// across modules for a constant.
 //
 // Each mountain is a CLUSTER of sub-peaks: matterhorn-sharp single
 // horns or mont-blanc-style ridges. SDF takes MAX over sub-peak
 // heights for the union shape, giving each mountain a distinct
 // silhouette.
 //
-// Performance: bounding sphere anchored at MID-HEIGHT (not base) so
-// the world origin sits OUTSIDE each mountain's bounding sphere and
-// the per-ray bounding-sphere cull actually rejects mountains the
-// ray doesn't point at. With base anchoring, the bounding sphere
-// would cover the world origin (radius ≈ peakH > base distance to
-// origin) and every ray would be forced to consider every mountain
-// per-step.
-
-const SHACK_PLATEAU_Y = -13;
-const DEEP_SEA_Y      = -180;
+// Performance: bounding box anchored at MID-HEIGHT (not base) so
+// the world origin sits OUTSIDE each mountain's bound and the
+// per-ray cull actually rejects mountains the ray doesn't point at.
+// With base anchoring, the bound would cover the world origin and
+// every ray would be forced to consider every mountain per-step.
 
 // Peak radius — how far the peak point sits from world origin. Set
 // past the dome's outer shell (1030) so mountains extend through the
@@ -75,42 +68,6 @@ const montBlancPeaks = (h, baseR) => [
   { ox: 0,             oz: 0,             h: h,        subR: baseR * 0.65, sharp: 1.7 },   // primary
   { ox:  baseR * 0.50, oz: -baseR * 0.10, h: h * 0.90, subR: baseR * 0.55, sharp: 1.6 },
 ];
-
-
-// ─────────────────────────── layout ───────────────────────────
-
-const MOUNTAINS = (() => {
-  // Range mountain — base picks the appropriate ground Y based on
-  // which hemisphere it sits in (per-mountain `base_y` field).
-  const range = (angle, hd, baseR, base_y, hasSnow, seed, shapeFn) => {
-    const peakH = peakHeightOnDome(hd, base_y);
-    return {
-      angle, hd, baseR, base_y, peakH, hasSnow, noiseSeed: seed,
-      peaks: shapeFn(peakH, baseR),
-    };
-  };
-
-  return [
-    // Foothill — kitchen-window view direction (-Z), free-standing
-    // inside the dome. World peak Y = 67, all-green.
-    {
-      angle: 268, hd: 200, baseR: 70, base_y: SHACK_PLATEAU_Y, peakH: 80,
-      hasSnow: false, noiseSeed: 9.1,
-      peaks: [
-        { ox: 0, oz: 0, h: 80, subR: 70, sharp: 1.5 },
-      ],
-    },
-    // Main range — 2 mountains on the LAND side of the cove (-Z
-    // hemisphere). The painted-silhouette backdrop on the firmament
-    // fills out the rest of the horizon, so only a couple of real-
-    // geometry items are needed to give the player something to fly
-    // up to. 220° sits on the far -X flank as a matterhorn horn;
-    // 307° sits back-right (off the mousehole side) as a wider
-    // mont-blanc ridge. Asymmetric placement avoids regularity.
-    range(220, 900, 400, SHACK_PLATEAU_Y, true, 1.7, matterhornPeaks),
-    range(307, 850, 440, SHACK_PLATEAU_Y, true, 4.5, montBlancPeaks),
-  ];
-})();
 
 
 // ─────────────────────────── geometry ───────────────────────────
@@ -198,14 +155,47 @@ const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH }) => {
  * (typically outside.js's REGION_OUTSIDE-tagged registrar).
  *
  * Item position is at MID-HEIGHT (base_y + peakH/2) so the bounding
- * sphere centers there, not at the base — keeps the world origin
- * outside each sphere so the per-ray bounding-sphere cull actually
- * rejects mountains a ray doesn't point at.
+ * box centers there, not at the base — keeps the world origin
+ * outside each item's bound so the per-ray cull actually rejects
+ * mountains a ray doesn't point at.
  *
  * @param {(item: import('../../core/scene.js').Item) => void} add
+ * @param {{ plateauY: number }} opts   `plateauY` is the cove's shack-
+ *        plateau elevation (owned by outside.js); each mountain's base
+ *        anchors here.
  */
-export const addToScene = (add) => {
-  for (const m of MOUNTAINS) {
+export const addToScene = (add, { plateauY }) => {
+  // Range mountain — wraps shape + dome height into a layout record.
+  const range = (angle, hd, baseR, base_y, hasSnow, seed, shapeFn) => {
+    const peakH = peakHeightOnDome(hd, base_y);
+    return {
+      angle, hd, baseR, base_y, peakH, hasSnow, noiseSeed: seed,
+      peaks: shapeFn(peakH, baseR),
+    };
+  };
+
+  const mountains = [
+    // Foothill — kitchen-window view direction (-Z), free-standing
+    // inside the dome. World peak Y = 67, all-green.
+    {
+      angle: 268, hd: 200, baseR: 70, base_y: plateauY, peakH: 80,
+      hasSnow: false, noiseSeed: 9.1,
+      peaks: [
+        { ox: 0, oz: 0, h: 80, subR: 70, sharp: 1.5 },
+      ],
+    },
+    // Main range — 2 mountains on the LAND side of the cove (-Z
+    // hemisphere). The painted-silhouette backdrop on the firmament
+    // fills out the rest of the horizon, so only a couple of real-
+    // geometry items are needed to give the player something to fly
+    // up to. 220° sits on the far -X flank as a matterhorn horn;
+    // 307° sits back-right (off the mousehole side) as a wider
+    // mont-blanc ridge. Asymmetric placement avoids regularity.
+    range(220, 900, 400, plateauY, true, 1.7, matterhornPeaks),
+    range(307, 850, 440, plateauY, true, 4.5, montBlancPeaks),
+  ];
+
+  for (const m of mountains) {
     const angRad = m.angle * Math.PI / 180;
     const cx     = m.hd * Math.cos(angRad);
     const cz     = m.hd * Math.sin(angRad);
@@ -216,7 +206,11 @@ export const addToScene = (add) => {
       colorFn:  makeMountainColorFn(m),
       position: [cx, cy, cz],
       sdf:      makeMountainSdf(m),
-      boundingRadius: Math.sqrt(m.baseR * m.baseR + (m.peakH / 2) * (m.peakH / 2)) + 1,
+      // Mountain is a heightfield cone: ±baseR in X/Z at the foot,
+      // narrowing to a peak at the top. AABB matches the foot and
+      // accepts empty corners high up — tighter than a sphere bound
+      // that would need to enclose the base-to-peak diagonal.
+      boundingBox: [m.baseR + 1, m.peakH / 2 + 1, m.baseR + 1],
     });
   }
 };
