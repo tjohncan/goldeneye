@@ -87,20 +87,56 @@ const DEFAULT_LIGHTING = {
 /** Output Float32Array, length 3 × max ever lens count. Lazily grown. */
 let _outBuffer = null;
 
-/** Per-trace pre-cull buffer. When `scene.visibleRegions` is supplied,
- *  trace() builds a smaller subset of items reachable from the camera's
- *  region into this array (items with regionKey in the camera region's
- *  visible set, plus items with no regionKey). The per-ray bounding-
- *  sphere loop then iterates this subset instead of the full scene.
- *  Reused across calls to avoid per-frame allocation. */
-const _visibleItems = [];
+/** Per-camera-region precomputed candidate list. The first trace on a
+ *  scene (or any trace after the scene grows) walks each item once and
+ *  files it into every camera region whose visibleRegions set reaches
+ *  it; subsequent traces just look up the right bucket by camera region.
+ *
+ *  Rebuilds when sceneReference or scene.length changes. Mutating an
+ *  existing item's regionKey post-build would leave the buckets stale —
+ *  widen the rebuild trigger if that pattern shows up. */
+let _bucketsScene     = null;
+let _bucketsForLength = -1;
+let _bucketsByRegion  = null;
 
-/** Per-ray candidate list — items whose bounding sphere intersects the ray.
- *  Valid prefix length is passed into marchRay alongside the array. */
+const ensureRegionBuckets = (scene) => {
+  if (_bucketsScene === scene && _bucketsForLength === scene.length) return;
+  _bucketsScene     = scene;
+  _bucketsForLength = scene.length;
+  _bucketsByRegion  = {};
+  const visibleRegions = scene.visibleRegions;
+  for (const cameraRegion in visibleRegions) {
+    const visibleSet = visibleRegions[cameraRegion];
+    const bucket = [];
+    for (let i = 0; i < scene.length; i++) {
+      const item = scene[i];
+      const rk  = item.regionKey;
+      const set = item._regionKeySet;
+      if (rk == null) {
+        bucket.push(item);                        // no regionKey: visible from everywhere
+      } else if (set !== undefined) {
+        for (let j = 0; j < visibleSet.length; j++) {
+          if (set.has(visibleSet[j])) { bucket.push(item); break; }
+        }
+      } else if (visibleSet.includes(rk)) {
+        bucket.push(item);
+      }
+    }
+    _bucketsByRegion[cameraRegion] = bucket;
+  }
+};
+
+/** Per-ray candidate list — items whose bounding shape intersects the ray.
+ *  Valid prefix length is passed into marchRay alongside the array.
+ *  Truncated at the end of each trace(), so tail entries don't pin
+ *  references to items past their last use. Cost is one length-set per
+ *  trace; matters only if items can ever be destroyed during a session,
+ *  but defensive enough to keep. */
 const _candidates = [];
 
 /** Per-ray "inside" list — translucent items the ray is currently passing
- *  through. Length tracked separately as `_insideLen`. */
+ *  through. Length tracked separately as `_insideLen`. Same truncation
+ *  rationale as `_candidates`. */
 const _inside = [];
 let _insideLen = 0;
 
@@ -115,14 +151,24 @@ let _maxDist = MAX_DIST;
 
 /** Pre-merged per-region shading table for per-hit lookups. Each entry
  *  holds the shading-relevant fields (lx/ly/lz/ambient) of the merged
- *  base+override Lighting for that region. Built once per trace() and
- *  consulted at each hit in marchRay() so per-region lighting tracks
- *  the SURFACE being shaded (not the camera). Surfaces in regions
- *  without an override fall back to base shading; result is that
- *  shading stays continuous across region boundaries — no hard flip
- *  when the camera crosses from one region's "lit space" into
- *  another's. Null when lighting.byRegion or scene.regionFn is absent. */
-let _byRegionShading = null;
+ *  base+override Lighting for that region. Consulted at each hit in
+ *  marchRay() so per-region lighting tracks the SURFACE being shaded
+ *  (not the camera). Surfaces in regions without an override fall back
+ *  to base shading; result is that shading stays continuous across
+ *  region boundaries — no hard flip when the camera crosses from one
+ *  region's "lit space" into another's. Null when lighting.byRegion or
+ *  scene.regionFn is absent.
+ *
+ *  Cache keyed on the lighting object reference: rebuilt only when a
+ *  trace() call passes a different lighting (or the first time after
+ *  a null-shading run). Skipping the per-trace rebuild keeps the hot
+ *  path allocation-free in the steady state. Mutating
+ *  lighting.byRegion[k] in place — without changing the lighting
+ *  reference — won't invalidate the cache; pass a fresh lighting
+ *  object if a runtime override (day/night cycle, cinematics) needs
+ *  to propagate. */
+let _byRegionShading           = null;
+let _byRegionShadingForLighting = null;
 
 /** Frame time in milliseconds, sampled once at the start of each trace().
  *  Time-varying SDFs and colorFns read this instead of calling Date.now() /
@@ -189,11 +235,14 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
     for (let i = 0; i < sceneLen; i++) {
       const item = scene[i];
       // Region filter. Single-key items mismatch out fast; array-keyed
-      // items (registered to multiple regions) take an extra membership
-      // check. Items with no regionKey always pass.
+      // items (registered to multiple regions) consult the Set sibling
+      // built at registerItem time. Items with no regionKey always
+      // pass. The Array.isArray dispatch lives at registration, not
+      // per-step.
       const rk = item.regionKey;
       if (region !== null && rk != null && rk !== region) {
-        if (!Array.isArray(rk) || rk.indexOf(region) < 0) continue;
+        const set = item._regionKeySet;
+        if (set === undefined || !set.has(region)) continue;
       }
       // Manual scan of the (typically tiny) inside list — faster than
       // Array.prototype.includes and avoids its iterator allocation.
@@ -305,17 +354,21 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
     const override = lighting.byRegion[region];
     if (override && override.maxDist !== undefined) originMaxDist = override.maxDist;
 
-    _byRegionShading = {};
-    for (const key in lighting.byRegion) {
-      const merged = { ...lighting, ...lighting.byRegion[key] };
-      const ld = merged.lightDir;
-      _byRegionShading[key] = {
-        lx: ld[0], ly: ld[1], lz: ld[2],
-        ambient: merged.ambient,
-      };
+    if (_byRegionShadingForLighting !== lighting) {
+      _byRegionShading = {};
+      for (const key in lighting.byRegion) {
+        const merged = { ...lighting, ...lighting.byRegion[key] };
+        const ld = merged.lightDir;
+        _byRegionShading[key] = {
+          lx: ld[0], ly: ld[1], lz: ld[2],
+          ambient: merged.ambient,
+        };
+      }
+      _byRegionShadingForLighting = lighting;
     }
   } else {
-    _byRegionShading = null;
+    _byRegionShading            = null;
+    _byRegionShadingForLighting = null;
   }
 
   // Base shading — used at hits in regions without a byRegion entry.
@@ -334,35 +387,17 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   frameTime = performance.now();
 
   // Per-trace pre-cull: if the scene declares which regions are reachable
-  // from each region (visibleRegions), drop items whose regionKey is not
-  // in the camera region's visible set before running the per-ray loops.
-  // Items with no regionKey always pass; items with an array regionKey
-  // pass if any of their keys is in the visible set. Falls through to
-  // the full scene when visibleRegions or regionFn is absent.
+  // from each region (visibleRegions), use the precomputed candidate list
+  // for the camera's region. ensureRegionBuckets builds this once per
+  // scene; the trace-time work is just an O(1) lookup.
   let activeScene = scene;
   let activeLen   = scene.length;
   if (scene.visibleRegions && scene.regionFn) {
-    const visibleSet = scene.visibleRegions[scene.regionFn(ox, oy, oz)];
-    if (visibleSet) {
-      let n = 0;
-      for (let i = 0; i < scene.length; i++) {
-        const item = scene[i];
-        const rk = item.regionKey;
-        if (rk == null) {
-          _visibleItems[n++] = item;
-        } else if (Array.isArray(rk)) {
-          for (let j = 0; j < rk.length; j++) {
-            if (visibleSet.indexOf(rk[j]) >= 0) {
-              _visibleItems[n++] = item;
-              break;
-            }
-          }
-        } else if (visibleSet.indexOf(rk) >= 0) {
-          _visibleItems[n++] = item;
-        }
-      }
-      activeScene = _visibleItems;
-      activeLen   = n;
+    ensureRegionBuckets(scene);
+    const bucket = _bucketsByRegion[scene.regionFn(ox, oy, oz)];
+    if (bucket !== undefined) {
+      activeScene = bucket;
+      activeLen   = bucket.length;
     }
   }
 
@@ -370,19 +405,77 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
     const dir = directions[i];
     const dx = dir[0], dy = dir[1], dz = dir[2];
 
-    // Per-ray bounding-sphere filter. Line-sphere intersection: project the
-    // item's center onto the ray, check the closest-point distance against
-    // the bounding radius. Items without a bounding radius are kept (they're
-    // large/infinite and could be hit by any ray).
+    // Pre-compute reciprocals once per ray so the slab test below can
+    // use multiplies instead of divides on the per-item path. The
+    // axis === 0 branches short-circuit before any reciprocal use, so
+    // the sentinel value chosen here doesn't matter.
+    const invDx = dx === 0 ? 0 : 1 / dx;
+    const invDy = dy === 0 ? 0 : 1 / dy;
+    const invDz = dz === 0 ? 0 : 1 / dz;
+
+    // Per-ray bounding filter. Each item declares either a bounding sphere
+    // (boundingRadius) or a bounding box (boundingBox); the corresponding
+    // line-vs-shape test drops items the ray can't possibly hit before
+    // any per-step SDF evaluation. Items with neither bound are always
+    // kept — for surfaces that span the scene and could be hit by any ray.
     let nc = 0;
     for (let j = 0; j < activeLen; j++) {
       const item = activeScene[j];
       if (item.invisible) continue;
-      const r = item.boundingRadius;
+      const bb = item.boundingBox;
+      const r  = item.boundingRadius;
+
+      if (bb !== undefined) {
+        // Slab method — line vs AABB. tEnter/tExit converge to the
+        // intersection range across the three axis slabs; reject if the
+        // range is empty or fully behind the ray origin. Branch on
+        // axis === 0 to dodge 0·Inf=NaN at slab-aligned origins; the
+        // taken path is rare for non-axis-aligned ray batches and the
+        // predictor handles it cheaply.
+        const ip = item.position;
+        const dxMin = ip[0] - bb[0] - ox;
+        const dxMax = ip[0] + bb[0] - ox;
+        let tEnter, tExit;
+        if (dx === 0) {
+          if (dxMin > 0 || dxMax < 0) continue;
+          tEnter = -Infinity; tExit = +Infinity;
+        } else {
+          const t1 = dxMin * invDx, t2 = dxMax * invDx;
+          tEnter = t1 < t2 ? t1 : t2;
+          tExit  = t1 < t2 ? t2 : t1;
+        }
+        const dyMin = ip[1] - bb[1] - oy;
+        const dyMax = ip[1] + bb[1] - oy;
+        if (dy === 0) {
+          if (dyMin > 0 || dyMax < 0) continue;
+        } else {
+          const t1 = dyMin * invDy, t2 = dyMax * invDy;
+          const tlo = t1 < t2 ? t1 : t2, thi = t1 < t2 ? t2 : t1;
+          if (tlo > tEnter) tEnter = tlo;
+          if (thi < tExit)  tExit  = thi;
+        }
+        const dzMin = ip[2] - bb[2] - oz;
+        const dzMax = ip[2] + bb[2] - oz;
+        if (dz === 0) {
+          if (dzMin > 0 || dzMax < 0) continue;
+        } else {
+          const t1 = dzMin * invDz, t2 = dzMax * invDz;
+          const tlo = t1 < t2 ? t1 : t2, thi = t1 < t2 ? t2 : t1;
+          if (tlo > tEnter) tEnter = tlo;
+          if (thi < tExit)  tExit  = thi;
+        }
+        if (tEnter > tExit || tExit < 0) continue;
+        _candidates[nc++] = item;
+        continue;
+      }
+
       if (r == null) {
         _candidates[nc++] = item;
         continue;
       }
+
+      // Line-sphere — project the item's center onto the ray, check the
+      // closest-point distance against the bounding radius.
       const ip = item.position;
       const cx = ip[0] - ox;
       const cy = ip[1] - oy;
@@ -400,6 +493,11 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
              lx, ly, lz, ambient, bgR, bgG, bgB,
              _outBuffer, 3 * i);
   }
+
+  // Drop tail references in the per-ray scratch arrays — see their
+  // comments for rationale.
+  _candidates.length = 0;
+  _inside.length     = 0;
 
   return _outBuffer;
 };

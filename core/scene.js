@@ -32,14 +32,22 @@
  *   opacity?: number,       // surface alpha 0..1; default 1 (opaque). Translucent
  *                           // items contribute color and let rays continue past.
  *   collides?: boolean,     // whether physics treats as solid (default true).
- *                           // Set false for items the fish should swim through.
+ *                           // Set false for items the camera should pass through.
  *   boundingRadius?: number, // if set, the tracer's per-ray bounding-sphere
  *                           // filter drops the item from a ray's candidate
  *                           // list when the ray's bounding sphere doesn't
  *                           // intersect this radius around `position`. Items
- *                           // WITHOUT this field are never filtered (use for
- *                           // large/infinite items — room, floor and ceiling
- *                           // planes).
+ *                           // WITHOUT this field (or boundingBox) are never
+ *                           // filtered — for items whose extent isn't
+ *                           // usefully bounded (enclosing shells, ground
+ *                           // planes, sky shells).
+ *   boundingBox?: Vec3,     // alternative to boundingRadius — world-axis-
+ *                           // aligned half-extents [hx, hy, hz] of a box
+ *                           // around `position`. Tighter than a sphere for
+ *                           // flat or elongated items, where the sphere
+ *                           // has to enclose the diagonal and burns volume
+ *                           // on the empty axes. Tracer prefers boundingBox
+ *                           // when both are set.
  *   regionKey?: RegionKey | RegionKey[],
  *                           // if set together with `Scene.regionFn`, the
  *                           // tracer's per-step region filter only considers
@@ -51,9 +59,16 @@
  *                           // disk parked at the seam between two zones —
  *                           // so sphere-trace doesn't overstep them during
  *                           // the wrong region's marching). Items WITHOUT
- *                           // a regionKey are always considered (use for
- *                           // truly scene-spanning items: outer walls, floor
- *                           // and ceiling planes).
+ *                           // a regionKey are always considered — for
+ *                           // truly scene-spanning surfaces (enclosing
+ *                           // shells, ground planes, sky shells).
+ *   _regionKeySet?: Set<RegionKey>,
+ *                           // internal: populated by registerItem when
+ *                           // regionKey is an array, so per-step / per-
+ *                           // iteration region filters can use Set.has()
+ *                           // instead of dispatching on Array.isArray +
+ *                           // indexOf. Don't set manually — registerItem
+ *                           // owns this field.
  * }} Item
  */
 
@@ -90,11 +105,19 @@ export const createScene = () => [];
 /**
  * @param {Scene} scene
  * @param {Item} item
- * @returns {number} the item's index in the scene
+ * @returns {Item} the item just registered (same reference passed in)
  */
 export const registerItem = (scene, item) => {
+  // Pre-classify the regionKey shape so the per-step region filter in
+  // the marcher can avoid Array.isArray on every per-item check. Items
+  // with array regionKey get a Set sibling for fast has() lookup;
+  // single-key and no-key items skip the field entirely (the hot path
+  // distinguishes via `_regionKeySet === undefined`).
+  if (Array.isArray(item.regionKey)) {
+    item._regionKeySet = new Set(item.regionKey);
+  }
   scene.push(item);
-  return scene.length - 1;
+  return item;
 };
 
 
@@ -161,6 +184,15 @@ export const capsuleBetweenSDF = ([ax, ay, az], [bx, by, bz], radius) => {
 /**
  * Cylinder centered at the local origin along the Y axis, total height
  * 2*halfHeight, with the given radius.
+ *
+ * Cheap form: outside-distance is exact (Euclidean to the nearest face,
+ * accounting for the rounded edge where side meets cap). Inside-distance
+ * is `min(max(dr, dy), 0)` — accurate near a single bounding face but
+ * understated near the inside corner where side and cap meet, where the
+ * true nearest-surface distance is the diagonal to that corner. The
+ * marcher and physics consume only the sign and the outside step
+ * distance, so neither cares; a precise inside-overlap measurement
+ * (e.g., a deep penetration test) would need the corrected form.
  */
 /** @type {(halfHeight: number, radius: number) => SDF} */
 export const cylinderSDF = (halfHeight, radius) => (px, py, pz) => {
@@ -239,10 +271,81 @@ export const cutSDF = (remove, from) => (px, py, pz) =>
   Math.max(-remove(px, py, pz), from(px, py, pz));
 
 /**
+ * Like cutSDF but cheap when the query point is far from the cut tool. The
+ * tool is assumed fully contained in sphere(removeCenter, removeBoundR);
+ * outside that sphere, tool(p) > 0 (no carved material), so cutSDF
+ * collapses to base(p) and we skip the tool eval entirely. Inside the
+ * sphere, identical to cutSDF.
+ *
+ * Useful when a small cut tool localizes within a much larger always-
+ * considered base (e.g., a shaped hole punched through an enclosing
+ * shell): the base's SDF gets queried every step it stays in scope,
+ * but the tool exists in just one neighborhood — shortcut bails out
+ * of the tool eval for the steps that are far from the tool.
+ *
+ * Bound MUST fully enclose the tool's MATERIAL (where tool ≤ 0).
+ * Margin past the worst-case tool-surface distance depends on the
+ * consumer:
+ *   - Rendering only: margin > HIT_EPSILON (~0.001) avoids ghost-pixel
+ *     artifacts at the tool surface.
+ *   - Physics-traversed (a mover-radius collider must be able to swim
+ *     through the carved volume): margin ≥ MOVER_RADIUS. Otherwise
+ *     when the mover's center crosses the bound boundary while still
+ *     inside the carved tool's neighborhood, the shortcut returns the
+ *     base SDF (much more negative than reality), and the collider's
+ *     overlap-resolver pushes along the BASE gradient — which is
+ *     usually wrong direction for the carved volume, slingshotting
+ *     the mover out of the tunnel. Use the larger margin if either
+ *     applies; both apply for any cut a collider traverses.
+ *
+ * The same enclosure rule is load-bearing for any consumer that reads
+ * the SDF MAGNITUDE outside the bound: real cut(p) is max(-tool, base),
+ * but the shortcut returns base(p) — a value MORE NEGATIVE than reality
+ * when the point is inside `from` material near the tool (the shortcut
+ * reads as if the point is deeper inside the carved item than it
+ * actually is). Sign always agrees, so the marcher (which only
+ * consumes sign + outside-step distance) is unaffected; a numeric-
+ * overlap consumer that uses the depth therefore over-estimates
+ * penetration by up to tool(p) at the bound surface. In practice the
+ * gap is bounded by the margin chosen above.
+ *
+ * Bound coords match the frame the SDFs are combined in (world if both
+ * SDFs are world-frame; item-local if base is in item-local and tool was
+ * wrapped to match — translate the bound center the same way).
+ */
+/** @type {(remove: SDF, from: SDF, removeCenter: Vec3, removeBoundR: number) => SDF} */
+export const cutSDFCullable = (remove, from, [cx, cy, cz], r) => {
+  const r2 = r * r;
+  return (px, py, pz) => {
+    const dx = px - cx, dy = py - cy, dz = pz - cz;
+    if (dx * dx + dy * dy + dz * dz > r2) return from(px, py, pz);
+    return Math.max(-remove(px, py, pz), from(px, py, pz));
+  };
+};
+
+/**
+ * Like cutSDFCullable but with an axis-aligned box bound instead of a
+ * sphere — tighter for elongated or box-shaped tools, where a sphere
+ * bound has to enclose the diagonal and burns volume on the empty axes.
+ *
+ * `removeHalf` is the world-axis-aligned half-extents around `removeCenter`.
+ * Same coord-frame rule as the sphere variant.
+ */
+/** @type {(remove: SDF, from: SDF, removeCenter: Vec3, removeHalf: Vec3) => SDF} */
+export const cutSDFCullableBox = (remove, from, [cx, cy, cz], [hx, hy, hz]) =>
+  (px, py, pz) => {
+    if (Math.abs(px - cx) > hx ||
+        Math.abs(py - cy) > hy ||
+        Math.abs(pz - cz) > hz) return from(px, py, pz);
+    return Math.max(-remove(px, py, pz), from(px, py, pz));
+  };
+
+/**
  * Smooth union — like unionSDF but with rounded blending where surfaces meet.
  * `k` is the smoothing radius in world units; small k ≈ sharp, larger k
  * (try 0.1–0.5) gives blob-like rounded transitions. Used for organic shapes
- * (rocks: jittered spheres; fish bodies; plant clusters). Don't pass k = 0.
+ * — clusters of jittered spheres, soft-bodied joins, branching forms.
+ * Don't pass k = 0.
  *
  * Implementation: nested polynomial smooth-min from Inigo Quilez. Faster than
  * the exponential variant — no exp/log in the hot loop.
