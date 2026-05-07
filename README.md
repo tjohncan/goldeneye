@@ -65,6 +65,9 @@ optional fields layer on top:
 - `collides` — physics participation (default true).
 - `boundingRadius` — opt-in per-ray culling.
   The tracer drops items whose bounding sphere doesn't intersect each ray's path.
+- `boundingBox` — alternative to `boundingRadius`; world-axis-aligned
+  half-extents `[hx, hy, hz]` of a box around `position`. Tighter than
+  a sphere for flat or elongated items (door, water surface, plates, …).
 - `regionKey` — opt-in per-step culling. With `Scene.regionFn(p)` mapping
   world points to region keys, the tracer skips items whose `regionKey`
   doesn't match the current ray-step point's region.
