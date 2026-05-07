@@ -22,11 +22,12 @@
 import {
   registerItem,
   sphereSDF, boxSDF, cylinderSDF,
-  unionSDF, intersectionSDF, cutSDF, invertSDF,
+  unionSDF, intersectionSDF, invertSDF,
   translateSDF, rotateXSDF,
 } from '../../../core/scene.js';
 import { frameTime } from '../../../core/tracer.js';
 import { REGION_KITCHEN } from '../kitchen.js';
+import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
 export const REGION_CHAMBER = 'chamber';
 
@@ -65,8 +66,12 @@ const KITCHEN_BACK_WALL_Z = -22.0;
 // its visible color comes from whichever shell's wall the ray hits.
 const PIPE_R_OUTER       = 0.45;
 const PIPE_R_INNER       = 0.42;
-const PIPE_Z_KITCHEN_END = -21.5;            // 0.5 inside the kitchen
-const PIPE_Z_TORUS_END   = -22.6;            // 0.5 past the torus +Z extent at θ=π/2
+// Z-overlaps satisfy the cutSDF/unionSDF shared-boundary rule (>
+// MIN_TRAVERSAL_OVERLAP for fish traversal, plus a small render
+// margin). Torus +Z extent at θ=π/2 sits at -22.05 (TORUS_CENTER_Z
+// + TORUS_R + TORUS_r_OUTER).
+const PIPE_Z_KITCHEN_END = KITCHEN_BACK_WALL_Z + (MIN_TRAVERSAL_OVERLAP + 0.1);  // -21.5 with default fishRadius
+const PIPE_Z_TORUS_END   = -22.05            - (MIN_TRAVERSAL_OVERLAP + 0.15); // -22.6
 const PIPE_HALF_LEN      = (PIPE_Z_KITCHEN_END - PIPE_Z_TORUS_END) / 2;
 const PIPE_CENTER_Z      = (PIPE_Z_KITCHEN_END + PIPE_Z_TORUS_END) / 2;
 
@@ -134,6 +139,21 @@ export const chamberAirSdf = unionSDF(
   pipeVolumeWorldSdf,
 );
 const chamberRoomSdf = invertSDF(chamberAirSdf);
+
+// Bounding boxes for cullable cuts. PIPE bounds pipeVolumeWorldSdf alone
+// (used here for the kitchen-room + kitchen-window carves). CHAMBER_AIR
+// bounds the full union (used by outside.js for the house-exterior carve).
+// Both are physics-traversed (the fish swims through), so the margin
+// past the material extent is FISH_RADIUS — see cutSDFCullableBox doc
+// in core/scene.js for why the mover-radius margin is mandatory there.
+//
+// Material extents (no margin):
+//   pipe         x∈[10.05,10.95]  y∈[3.75,4.65]  z∈[-22.6,-21.5]
+//   chamber air  x∈[9.05,11.95]   y∈[3.5,4.9]    z∈[-26.5,-21.5]
+const PIPE_BOUND_CENTER = [SUN_X, SUN_Y, PIPE_CENTER_Z];
+const PIPE_BOUND_HALF   = [0.45 + FISH_RADIUS, 0.45 + FISH_RADIUS, 0.55 + FISH_RADIUS];
+export const CHAMBER_AIR_BOUND_CENTER = [SUN_X, SUN_Y, (CHAMBER_BACK_Z + PIPE_Z_KITCHEN_END) / 2];
+export const CHAMBER_AIR_BOUND_HALF   = [1.45 + FISH_RADIUS, 0.7 + FISH_RADIUS, 2.5 + FISH_RADIUS];
 
 // Gyroid — a triply-periodic minimal surface. The unscaled function
 // returns a value that's not a true SDF (not Lipschitz-1), but
@@ -450,15 +470,15 @@ const gyroidColorFn = (lpx, lpy, lpz) => {
 // ─────────────────────────── scene build ───────────────────────────
 
 /**
- * Add the chamber zone to the scene. Mutates the caller-supplied kitchen
- * `room` AND `window` items in place to carve the entry pipe through the
- * back wall and through the painted-sun area of the window.
+ * Add the chamber zone to the scene. Carves the entry pipe through the
+ * caller-supplied kitchen `room` and `window` handles (back wall +
+ * painted-sun area of the window).
  *
  * @param {import('../../../core/scene.js').Scene} scene
  * @param {{
- *   room:   import('../../../core/scene.js').Item,
- *   window: import('../../../core/scene.js').Item,
- * }} kitchen   Handles to kitchen items this zone needs to mutate.
+ *   room:   import('../kitchen.js').KitchenHandle,
+ *   window: import('../kitchen.js').KitchenHandle,
+ * }} kitchen   Handles to kitchen surfaces this zone extends.
  */
 export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_CHAMBER });
@@ -466,21 +486,10 @@ export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) 
   // Carve the entry pipe through the kitchen room (so the kitchen-side
   // half of the pipe reads as air) and through the kitchen window (so
   // the pipe punches a clean circular hole through the glass at the
-  // sun's painted location).
-  //
-  // Item SDFs are queried in item-LOCAL coords (world - item.position),
-  // so a tool SDF built in world coords (like our pipeVolumeSdf) has to
-  // be wrapped into each target's local frame before cutting. The
-  // kitchen-room is at (0,0,0) so local = world and the wrap is a
-  // no-op, but the window sits at (+8, +2, -21.95) and needs the offset.
-  const cutItemWith = (item, worldToolSdf) => {
-    const [px, py, pz] = item.position;
-    const localTool = (lx, ly, lz) => worldToolSdf(lx + px, ly + py, lz + pz);
-    const oldSdf = item.sdf;
-    item.sdf = cutSDF(localTool, oldSdf);
-  };
-  cutItemWith(kitchenRoom,   pipeVolumeWorldSdf);
-  cutItemWith(kitchenWindow, pipeVolumeWorldSdf);
+  // sun's painted location). The handle's addCut wraps the world-frame
+  // pipe SDF + bound into each target's local frame.
+  kitchenRoom  .addCut(pipeVolumeWorldSdf, PIPE_BOUND_CENTER, PIPE_BOUND_HALF);
+  kitchenWindow.addCut(pipeVolumeWorldSdf, PIPE_BOUND_CENTER, PIPE_BOUND_HALF);
 
   // Chamber-room shell — material everywhere except in the chamber
   // box, the torus tube, and the entry pipe. Paints chamber walls.
@@ -518,7 +527,7 @@ export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) 
     colorFn:  marqueeColorFn,
     position: [SUN_X, SUN_Y - 0.05, CHAMBER_BACK_Z + MARQUEE_HALF[2] + 0.02],
     sdf:      boxSDF(MARQUEE_HALF),
-    boundingRadius: Math.hypot(MARQUEE_HALF[0], MARQUEE_HALF[1], MARQUEE_HALF[2]) + 0.02,
+    boundingBox: MARQUEE_HALF,
   });
 
   // Gyroid centerpiece — abstract sculptural blob hovering just behind
@@ -550,7 +559,9 @@ export const addToScene = (scene, { room: kitchenRoom, window: kitchenWindow }) 
     position: [SUN_X, SUN_Y, KITCHEN_BACK_WALL_Z + 0.15],   // 0.05 in front of the window's kitchen-facing face
     sdf:      rotateXSDF(Math.PI / 2, cylinderSDF(0.005, 0.55)),
     collides: false,
-    boundingRadius: 0.56,
+    // Disc sits with its axis along Z after the rotateX(π/2): radius
+    // 0.55 in XY, half-thickness 0.005 in Z.
+    boundingBox: [0.55, 0.55, 0.005],
     regionKey: [REGION_CHAMBER, REGION_KITCHEN],
   });
 };

@@ -18,11 +18,54 @@
 import {
   registerItem,
   sphereSDF, boxSDF, planeSDF, capsuleSDF, cylinderSDF,
-  unionSDF, smoothUnionSDF, cutSDF, invertSDF,
+  unionSDF, smoothUnionSDF, cutSDF, cutSDFCullableBox, invertSDF,
   translateSDF, rotateXSDF, rotateYSDF,
 } from '../../core/scene.js';
 
 export const REGION_KITCHEN = 'kitchen';
+
+/**
+ * Wrap an Item with the methods secret zones use to layer carve cuts
+ * and colorFn overrides onto kitchen surfaces. The wrapper handles the
+ * world→item-local frame conversion so callers pass world-frame tools
+ * and bound centers; half-extents are world-axis-aligned and need no
+ * conversion. Both methods compose: each call wraps the previous SDF /
+ * colorFn, so multiple secrets stacking on the same handle work
+ * naturally.
+ *
+ * @param {import('../../core/scene.js').Item} item
+ */
+const wrapHandle = (item) => ({
+  item,
+
+  /** Carve a tool out of the item via cutSDFCullableBox. Tool SDF and
+   *  bound center are in world frame; the wrapper converts to item-
+   *  local. */
+  addCut(toolWorldSdf, boundWorldCenter, boundHalf) {
+    const [px, py, pz] = item.position;
+    const localTool = (lx, ly, lz) => toolWorldSdf(lx + px, ly + py, lz + pz);
+    const localBoundCenter = [
+      boundWorldCenter[0] - px,
+      boundWorldCenter[1] - py,
+      boundWorldCenter[2] - pz,
+    ];
+    item.sdf = cutSDFCullableBox(localTool, item.sdf, localBoundCenter, boundHalf);
+  },
+
+  /** Wrap the item's colorFn with an override predicate. `overrideFn`
+   *  is called with item-local coords; return a [r, g, b] triplet to
+   *  override, or null/undefined to fall through to the previous
+   *  colorFn (or item.color if none). */
+  addColorOverride(overrideFn) {
+    const previous = item.colorFn;
+    const baseColor = item.color;
+    item.colorFn = (lpx, lpy, lpz) => {
+      const c = overrideFn(lpx, lpy, lpz);
+      if (c !== null && c !== undefined) return c;
+      return previous ? previous(lpx, lpy, lpz) : baseColor;
+    };
+  },
+});
 
 // Room geometry — used by the room walls, floor and ceiling planes,
 // potlights cluster, and prop placement against walls (window, counter,
@@ -236,25 +279,21 @@ const paintingColorFn = (lpx, lpy, lpz) => {
 // ──────────────────────────── scene build ────────────────────────────
 
 /**
- * Build the kitchen scene. Returns named handles for the three items
- * the secret zones mutate in place (room walls cut for tunnels/keyholes,
- * window cut for the chamber pipe, door cut for the keyhole). Threading
- * these through the call site beats name-string scene.find() — no
- * silent miss if a name ever changes, and the dependency is explicit.
+ * Build the kitchen scene. Returns wrapped handles for the three items
+ * the secret zones extend (room walls carved for tunnels/keyholes,
+ * window carved for the chamber pipe, door carved for the keyhole).
+ * Threading these through the call site beats name-string scene.find()
+ * — no silent miss if a name ever changes — and the wrapper API
+ * (addCut + addColorOverride) keeps the world↔local frame conversion
+ * and colorFn-chaining boilerplate in one place.
+ *
+ * @typedef {ReturnType<typeof wrapHandle>} KitchenHandle
  *
  * @param {import('../../core/scene.js').Scene} scene
- * @returns {{
- *   room:   import('../../core/scene.js').Item,
- *   door:   import('../../core/scene.js').Item,
- *   window: import('../../core/scene.js').Item,
- * }}
+ * @returns {{ room: KitchenHandle, door: KitchenHandle, window: KitchenHandle }}
  */
 export const addToScene = (scene) => {
-  const add = (item) => {
-    const tagged = { ...item, regionKey: REGION_KITCHEN };
-    registerItem(scene, tagged);
-    return tagged;
-  };
+  const add = (item) => registerItem(scene, { ...item, regionKey: REGION_KITCHEN });
 
   // ─────────── structural ───────────
 
@@ -284,8 +323,9 @@ export const addToScene = (scene) => {
   });
 
   // Potlights — 4 corner lights at the ceiling. Item position sits at
-  // ceiling-center between the four so a single bounding sphere covers
-  // all of them; rays pointed forward or down cull the item cheaply.
+  // ceiling-center between the four; the ring is X/Z half 8.4, Y half
+  // 0.4. AABB matches it cleanly; a sphere bound would have to enclose
+  // the ring's diagonal and burn the wasted Y extent on every ray.
   //
   // Over-bright color: lambertian dims the visible underside (ndotl ≤ 0)
   // to ambient × color. With ambient = 0.35, [800, 800, 800] still
@@ -302,7 +342,7 @@ export const addToScene = (scene) => {
       potlight(+8, -8),
       potlight(-8, -8),
     ),
-    boundingRadius: Math.hypot(8, 8) + 0.45,
+    boundingBox: [8.4, 0.4, 8.4],
   });
 
 
@@ -320,7 +360,11 @@ export const addToScene = (scene) => {
       tableLeg(+11, -7),
       tableLeg(-11, -7),
     ),
-    boundingRadius: 14.5,
+    // Material runs item-local X ±13, Y -5 to +0.5 (legs down, top up),
+    // Z ±9. Symmetric AABB around `position` rounds the Y half up to 5,
+    // accepting ~4.5 of empty space above the top — the price of keeping
+    // the bound centered on `position`.
+    boundingBox: [13, 5, 9],
   });
 
   // Table runner — a thin square rotated 45° around Y so its corners point
@@ -336,7 +380,11 @@ export const addToScene = (scene) => {
     colorFn:  runnerColorFn,
     position: [0, -7.48, 0],
     sdf:      rotateYSDF(Math.PI / 4, boxSDF([RUNNER_HALF_EDGE, 0.02, RUNNER_HALF_EDGE])),
-    boundingRadius: RUNNER_HALF_DIAG + 0.1,
+    // World-AABB of the 45°-rotated square: corners land on the world ±X
+    // and ±Z axes at distance RUNNER_HALF_DIAG; Y is the slab's 0.02
+    // thickness. Rays looking up or down through the runner's footprint
+    // drop out at the cull rather than entering the per-step loop.
+    boundingBox: [RUNNER_HALF_DIAG, 0.02, RUNNER_HALF_DIAG],
   });
 
   const vaseInnerTy = VASE_INNER_HH - VASE_HALF_H + VASE_FLOOR_TH;
@@ -349,14 +397,15 @@ export const addToScene = (scene) => {
       cylinderSDF(VASE_HALF_H, VASE_OUTER_R),
     ),
     opacity:  0.4,
-    boundingRadius: 2,
+    boundingBox: [VASE_OUTER_R, VASE_HALF_H, VASE_OUTER_R],
   });
   add({
     name:     'flower-stem',
     color:    [80, 150, 80],
     position: [10, -5.25, 1.5],
     sdf:      capsuleSDF(2.25, 0.08),
-    boundingRadius: 2.5,
+    // Capsule extends ±(halfH + radius) along Y; ±radius in XZ.
+    boundingBox: [0.08, 2.33, 0.08],
   });
   add({
     name:     'flower-bloom',
@@ -390,9 +439,9 @@ export const addToScene = (scene) => {
     position: [-17, -3.75, -17],
     sdf: cutSDF(
       unionSDF(
-        // Upper gap — world Y -0.8 to -0.36 (0.44 thick — barely above
-        // fishRadius × 2 = 0.40, so the fish has just ~0.02 of vertical
-        // margin and threads through tight).
+        // Upper gap — world Y -0.8 to -0.36 (0.44 thick, just above
+        // MIN_TRAVERSAL_OVERLAP from physics.js, so the fish has only
+        // ~0.02 of vertical margin and threads through tight).
         translateSDF([0, +3.17, 0], unionSDF(
           boxSDF([2.25, 0.22, 3.5]),
           boxSDF([3.5, 0.22, 2.25]),
@@ -402,9 +451,10 @@ export const addToScene = (scene) => {
         // bottom face).
         //
         // Slab X/Z half is 3.5 (0.5 overlap past outer half 3). The overlap
-        // must exceed 2 × fishRadius (= 0.4) so the SDF dip in the overlap
-        // region (min depth = overlap / 2) stays above fishRadius —
-        // otherwise physics pushes the fish back out at the gap entrance.
+        // must exceed MIN_TRAVERSAL_OVERLAP (= 2·fishRadius from physics.js)
+        // so the SDF dip in the overlap region (min depth = overlap / 2)
+        // stays above fishRadius — otherwise physics pushes the fish back
+        // out at the gap entrance.
         translateSDF([0, -9.08, 0], unionSDF(
           boxSDF([2.25, 0.27, 3.5]),
           boxSDF([3.5, 0.27, 2.25]),
@@ -412,7 +462,7 @@ export const addToScene = (scene) => {
       ),
       boxSDF([3, 9.25, 3]),
     ),
-    boundingRadius: 10.5,
+    boundingBox: [3, 9.25, 3],
   });
 
   // Counter has a sink-shaped void carved out of its top so the basin
@@ -432,7 +482,9 @@ export const addToScene = (scene) => {
     color:    [180, 175, 165],
     position: [+5, -8.1, -ROOM_HALF_Z + 2.5],
     sdf:      cutSDF(sinkVoidInCounter, boxSDF([17, 4.9, 2.5])),
-    boundingRadius: 18,
+    // Outer envelope is the cut's `from` box — sinkVoid only carves
+    // material out, never adds to extent.
+    boundingBox: [17, 4.9, 2.5],
   });
 
   // Window + sill — single Item; the sill is a translated sub-box in
@@ -447,7 +499,10 @@ export const addToScene = (scene) => {
       boxSDF([5, 4, 0.05]),                                          // window pane
       translateSDF([0, -4.3, 0.55], boxSDF([5.6, 0.25, 0.6])),       // sill
     ),
-    boundingRadius: 7.5,
+    // Pane is ±5×±4×±0.05; sill drops to item-local Y -4.55 and reaches
+    // forward to Z +1.15. Symmetric AABB rounds the worst-case half on
+    // each axis, accepting small slop on the +Y and -Z sides.
+    boundingBox: [5.6, 4.55, 1.15],
   });
 
   // Sink — hollow basin recessed into the counter, built as outer-box
@@ -464,7 +519,9 @@ export const addToScene = (scene) => {
     color:    [180, 185, 190],
     position: [+8, -4.2, -19],
     sdf:      sinkBasin,
-    boundingRadius: 2,
+    // Outer envelope of the cutSDF — the inner-cut box only carves
+    // material away, never adds to extent.
+    boundingBox: [1.4, 1.0, 0.9],
   });
 
   const faucet = unionSDF(
@@ -476,7 +533,10 @@ export const addToScene = (scene) => {
     color:    [200, 205, 210],
     position: [+8, -3.2, -19.8],
     sdf:      faucet,
-    boundingRadius: 1.45,
+    // Faucet sits entirely above and forward of `position` (vertical
+    // riser at item-local Y 0..1.24, horizontal arm reaching forward
+    // to Z +0.60). Symmetric AABB pads the -Y / -Z sides empty.
+    boundingBox: [0.05, 1.24, 0.60],
   });
 
   // Closed door on the OPPOSITE wall (front wall, +Z=22). Wider than the
@@ -488,7 +548,7 @@ export const addToScene = (scene) => {
     colorFn:  doorColorFn,
     position: [+15, -2, ROOM_HALF_Z - 0.05],
     sdf:      boxSDF([3.5, 11, 0.05]),
-    boundingRadius: 12,
+    boundingBox: [3.5, 11, 0.05],
   });
 
   add({
@@ -497,8 +557,12 @@ export const addToScene = (scene) => {
     colorFn:  paintingColorFn,
     position: [-3, +1, ROOM_HALF_Z - 0.05],
     sdf:      boxSDF([3, 2.5, 0.05]),
-    boundingRadius: 4,
+    boundingBox: [3, 2.5, 0.05],
   });
 
-  return { room, door, window: windowItem };
+  return {
+    room:   wrapHandle(room),
+    door:   wrapHandle(door),
+    window: wrapHandle(windowItem),
+  };
 };

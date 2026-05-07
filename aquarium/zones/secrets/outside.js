@@ -17,7 +17,7 @@
 import {
   registerItem,
   sphereSDF, boxSDF,
-  cutSDF, unionSDF,
+  cutSDF, cutSDFCullableBox, unionSDF,
   translateSDF,
 } from '../../../core/scene.js';
 
@@ -27,11 +27,20 @@ import {
   ROOM_HALF_Y as KITCHEN_HALF_Y,
   ROOM_HALF_Z as KITCHEN_HALF_Z,
 } from '../kitchen.js';
-import { mouseholeAirSdf } from './mousehole.js';
-import { chamberAirSdf }   from './chamber.js';
+import {
+  mouseholeAirSdf,
+  MOUSEHOLE_AIR_BOUND_CENTER,
+  MOUSEHOLE_AIR_BOUND_HALF,
+} from './mousehole.js';
+import {
+  chamberAirSdf,
+  CHAMBER_AIR_BOUND_CENTER,
+  CHAMBER_AIR_BOUND_HALF,
+} from './chamber.js';
 import { sampleClouds }    from '../../assets/clouds.js';
 import * as mountains      from '../../assets/mountains.js';
 import { frameTime }       from '../../../core/tracer.js';
+import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
 export const REGION_OUTSIDE = 'outside';
 
@@ -98,12 +107,14 @@ const keyholeExtrudedSdf = (halfZ) => (lpx, lpy, lpz) => {
   return Math.min(Math.max(d2d, dz), 0) + Math.sqrt(ox * ox + oz * oz);
 };
 
-// Bore extends from 1.0 inside the kitchen, all the way through the
+// Bore extends past the kitchen front wall (z=+22), through the
 // house wall, and past the cove-side plate (knob is off-axis so it
-// doesn't constrain the bore extent). Outside extent derived from
-// HOUSE_HALF_Z so the bore follows whenever the outer-Z face moves.
-const KEYHOLE_Z_KITCHEN = +21.0;
-const KEYHOLE_Z_OUTSIDE = HOUSE_HALF_Z + 1.0;
+// doesn't constrain the bore extent). Both end overlaps satisfy
+// MIN_TRAVERSAL_OVERLAP for fish traversal plus a 0.6 visual margin.
+// Outside extent derived from HOUSE_HALF_Z so the bore follows the
+// outer-Z face if it ever moves.
+const KEYHOLE_Z_KITCHEN = +22.0          - (MIN_TRAVERSAL_OVERLAP + 0.6);  // +21 with default fishRadius
+const KEYHOLE_Z_OUTSIDE = HOUSE_HALF_Z   + (MIN_TRAVERSAL_OVERLAP + 0.6);  // outer face + 1.0
 const KEYHOLE_HALF_Z    = (KEYHOLE_Z_OUTSIDE - KEYHOLE_Z_KITCHEN) / 2;
 const KEYHOLE_CENTER_Z  = (KEYHOLE_Z_OUTSIDE + KEYHOLE_Z_KITCHEN) / 2;
 
@@ -111,6 +122,24 @@ const keyholeBoreWorldSdf = translateSDF(
   [KEYHOLE_X, KEYHOLE_Y, KEYHOLE_CENTER_Z],
   keyholeExtrudedSdf(KEYHOLE_HALF_Z),
 );
+
+// Bounding box for cullable cuts on items the keyhole bore passes
+// through (kitchen door, kitchen room, house exterior). The bore is
+// VERY elongated — Z half-length 5.5 vs XY footprint ~0.7 — so an AABB
+// bound is much tighter than a sphere here (sphere would have to
+// enclose the diagonal). Symmetric around (KEYHOLE_X, KEYHOLE_Y) even
+// though the keyhole shape is asymmetric in Y (slot extends further
+// down than the circle extends up); the small slop on the +Y side is
+// far cheaper than the keyhole shape's elongation. Margin past the
+// material extent on each axis is FISH_RADIUS — physics-traversed cut
+// (see cutSDFCullableBox doc in core/scene.js for the mover-radius
+// rule).
+const KEYHOLE_BORE_BOUND_CENTER = [KEYHOLE_X, KEYHOLE_Y, KEYHOLE_CENTER_Z];
+const KEYHOLE_BORE_BOUND_HALF   = [
+  0.55 + FISH_RADIUS,            // circle radius (= max of circle R, slot half-W)
+  0.65 + FISH_RADIUS,            // |slot bottom| (covers asymmetric Y, with slop on +Y side)
+  KEYHOLE_HALF_Z + FISH_RADIUS,  // extrusion half-length
+];
 
 // Brass escutcheon plate — thin rectangular plate on each side of the
 // door with the keyhole shape cut clean through, sized so the keyhole
@@ -144,15 +173,6 @@ const KNOB_LPY        = +0.78;                 // plate-local Y; just above keyh
 const knobSdf         = sphereSDF(KNOB_R);
 const KITCHEN_KNOB_Z  = KITCHEN_PLATE_Z - PLATE_HALF_Z - KNOB_R;
 const OUTSIDE_KNOB_Z  = OUTSIDE_PLATE_Z + PLATE_HALF_Z + KNOB_R;
-
-// Bounding radius covering the keyhole shape's full silhouette + plate
-// thickness. The circle reaches its lowest point at lpy = CY - R, the
-// slot reaches lpy = SLOT_BOT_Y; the corner of the slot (±SLOT_HALF_W,
-// SLOT_BOT_Y) is the most distant point from the shape's local origin.
-const KEYHOLE_BOUND_R = Math.hypot(
-  Math.max(KEY_CIRCLE_R, KEY_SLOT_HALF_W),
-  Math.max(Math.abs(KEY_CIRCLE_CY) + KEY_CIRCLE_R, Math.abs(KEY_SLOT_BOT_Y)),
-);
 
 // Closed spherical shell — material between innerR and outerR at all
 // orientations. Used by the cove's dome and firmament; both want a
@@ -362,9 +382,25 @@ const backWindowSdf = unionSDF(backWindowFrameSdf, backWindowGlassSdf);
 // the corner pockets that's the cove-side outer face → fish ends up
 // on the grass outside the building. The window is NOT cut here — the
 // wall stays solid behind it (window is purely decorative on top).
-const houseExteriorSdf = cutSDF(
-  unionSDF(keyholeBoreWorldSdf, mouseholeAirSdf, chamberAirSdf),
-  houseWallSdf,
+//
+// Equivalent to cutSDF(unionSDF(A, B, C), wall), since
+//   max(-min(A,B,C), w) = max(-A, -B, -C, w)
+// — but each tool gets its own AABB bound, so a step far from any
+// cut volume bails to wall(p) directly with at most three cheap box
+// rejects. Outside-region rays in the cove (the bulk of frames spent
+// looking at the shack) hit this path almost exclusively.
+const houseExteriorSdf = cutSDFCullableBox(
+  keyholeBoreWorldSdf,
+  cutSDFCullableBox(
+    mouseholeAirSdf,
+    cutSDFCullableBox(
+      chamberAirSdf,
+      houseWallSdf,
+      CHAMBER_AIR_BOUND_CENTER, CHAMBER_AIR_BOUND_HALF,
+    ),
+    MOUSEHOLE_AIR_BOUND_CENTER, MOUSEHOLE_AIR_BOUND_HALF,
+  ),
+  KEYHOLE_BORE_BOUND_CENTER, KEYHOLE_BORE_BOUND_HALF,
 );
 
 
@@ -658,14 +694,14 @@ const backWindowColorFn = (lpx, lpy, lpz) => {
 // ─────────────────────────── scene build ───────────────────────────
 
 /**
- * Add the outside zone to the scene. Mutates the caller-supplied kitchen
- * `door` and `room` items to carve the keyhole bore.
+ * Add the outside zone to the scene. Carves the keyhole bore through
+ * the caller-supplied kitchen `door` and `room` handles.
  *
  * @param {import('../../../core/scene.js').Scene} scene
  * @param {{
- *   room: import('../../../core/scene.js').Item,
- *   door: import('../../../core/scene.js').Item,
- * }} kitchen   Handles to kitchen items this zone needs to mutate.
+ *   room: import('../kitchen.js').KitchenHandle,
+ *   door: import('../kitchen.js').KitchenHandle,
+ * }} kitchen   Handles to kitchen surfaces this zone extends.
  */
 export const addToScene = (scene, { room: kitchenRoom, door }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_OUTSIDE });
@@ -676,25 +712,21 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   // thin slab in front of the wall; carving only the door leaves the
   // room wall intact behind it, blocking the bore. Mousehole and
   // chamber cut through the room too — same pattern.
-  const cutItemWith = (item, worldToolSdf) => {
-    const [px, py, pz] = item.position;
-    const localTool = (lx, ly, lz) => worldToolSdf(lx + px, ly + py, lz + pz);
-    item.sdf = cutSDF(localTool, item.sdf);
-  };
-  cutItemWith(door,         keyholeBoreWorldSdf);
-  cutItemWith(kitchenRoom,  keyholeBoreWorldSdf);
+  door       .addCut(keyholeBoreWorldSdf, KEYHOLE_BORE_BOUND_CENTER, KEYHOLE_BORE_BOUND_HALF);
+  kitchenRoom.addCut(keyholeBoreWorldSdf, KEYHOLE_BORE_BOUND_CENTER, KEYHOLE_BORE_BOUND_HALF);
 
   // Brass escutcheon plates — one each side of the door, with the
   // keyhole shape cut clean through. The plates frame the keyhole with
   // brass margin all around. Region-tagged so each is visible only
-  // from its own side.
-  const PLATE_BOUND_R = Math.hypot(PLATE_HALF_W, PLATE_HALF_H, PLATE_HALF_Z) + 0.05;
+  // from its own side. AABB matches the plate box; the keyhole cut
+  // never extends past it.
+  const PLATE_BOUND_HALF = [PLATE_HALF_W, PLATE_HALF_H, PLATE_HALF_Z];
   registerItem(scene, {
     name:     'door-plate-kitchen',
     color:    [180, 145, 50],
     position: [KEYHOLE_X, KEYHOLE_Y, KITCHEN_PLATE_Z],
     sdf:      plateSdf,
-    boundingRadius: PLATE_BOUND_R,
+    boundingBox: PLATE_BOUND_HALF,
     regionKey: REGION_KITCHEN,
   });
   add({
@@ -702,7 +734,7 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     color:    [180, 145, 50],
     position: [KEYHOLE_X, KEYHOLE_Y, OUTSIDE_PLATE_Z],
     sdf:      plateSdf,
-    boundingRadius: PLATE_BOUND_R,
+    boundingBox: PLATE_BOUND_HALF,
   });
 
   // Round brass knobs — spheres mounted on the upper portion of each
@@ -756,9 +788,9 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
 
   // Sun — over-bright sphere up near the dome's apex. Visual anchor
   // and teleport trigger (camera Y > SUN_TRIGGER_Y → reset to spawn,
-  // checked in main.js). collides:false so the camera passes through;
-  // the teleport fires before the camera reaches the dome wall behind
-  // the sun.
+  // wired through world.js's TELEPORT.triggerY). collides:false so the
+  // camera passes through; the teleport fires before the camera reaches
+  // the dome wall behind the sun.
   add({
     name:     'outside-sun',
     color:    [765, 705, 360],
@@ -787,10 +819,9 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   // cove. Where the rising beach pokes up through the slab, the
   // visible shoreline emerges naturally; far past the beach (past
   // BEACH_END_R), the slab covers the seafloor. collides:false so the
-  // camera can dive through to swim underwater. Bounding sphere
-  // covers the box diagonal — for cove players in the back-land
-  // hemisphere far from the slab's +Z center, the bounding cull
-  // rejects this item.
+  // camera can dive through to swim underwater. AABB matches the slab
+  // exactly — Y half is just 0.05 even though X/Z reach 1000+, so any
+  // ray not pointing at the water plane gets dropped at the cull.
   add({
     name:     'water-surface',
     color:    [60, 140, 170],
@@ -799,15 +830,16 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     sdf:      boxSDF([WATER_HALF_X, WATER_HALF_Y, WATER_HALF_Z]),
     opacity:  0.5,
     collides: false,
-    boundingRadius: Math.sqrt(WATER_HALF_X * WATER_HALF_X + WATER_HALF_Z * WATER_HALF_Z) + 2,
+    boundingBox: [WATER_HALF_X, WATER_HALF_Y, WATER_HALF_Z],
   });
 
   // Underwater fog — translucent box filling the cove's underwater
   // volume with a depth-graded blue tint. Camera below sea level
   // picks up the wash at step zero (box SDF negative inside).
   // collides:false. The box is confined to +Z so the tint never
-  // bleeds onto land in the mountain hemisphere. Bounding sphere
-  // similar to water-surface — rejects for back-land players.
+  // bleeds onto land in the mountain hemisphere. AABB matches the
+  // box; back-land rays drop at the X/Z slabs without reaching this
+  // item's per-step loop.
   add({
     name:     'underwater-fog',
     color:    [50, 100, 130],
@@ -816,22 +848,22 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     sdf:      boxSDF([FOG_HALF_X, FOG_HALF_Y, FOG_HALF_Z]),
     opacity:  0.25,
     collides: false,
-    boundingRadius: Math.sqrt(FOG_HALF_X * FOG_HALF_X + FOG_HALF_Y * FOG_HALF_Y + FOG_HALF_Z * FOG_HALF_Z) + 2,
+    boundingBox: [FOG_HALF_X, FOG_HALF_Y, FOG_HALF_Z],
   });
 
   // House exterior — the visible building from the cove. Wraps the
   // kitchen + all secret zones in one shell, with the keyhole bore cut
-  // through. Bounding sphere covers the shack's outer extent
-  // (HOUSE_HALF_X/Y/Z diagonal ≈ 48); cove rays not pointing at the
-  // shack skip the cutSDF chain entirely, which is the heaviest
-  // always-considered SDF in the outside zone.
+  // through. AABB matches the shack's outer extents exactly; cove rays
+  // not pointing at the shack skip the chained cutSDFCullableBox chain
+  // entirely, which is the heaviest cull-eligible SDF in the outside
+  // zone.
   add({
     name:     'house-exterior',
     color:    [110, 75, 45],
     colorFn:  houseExteriorColorFn,
     position: [0, 0, 0],
     sdf:      houseExteriorSdf,
-    boundingRadius: Math.sqrt(HOUSE_HALF_X * HOUSE_HALF_X + HOUSE_HALF_Y * HOUSE_HALF_Y + HOUSE_HALF_Z * HOUSE_HALF_Z) + 2,
+    boundingBox: [HOUSE_HALF_X, HOUSE_HALF_Y, HOUSE_HALF_Z],
   });
 
   // Back-of-shack window — visual continuity with the kitchen window
@@ -845,23 +877,30 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     colorFn:  backWindowColorFn,
     position: BACK_WINDOW_POS,
     sdf:      backWindowSdf,
-    boundingRadius: Math.hypot(BACK_WINDOW_HALF_X, BACK_WINDOW_HALF_Y, BACK_WINDOW_FRAME_HZ) + 0.05,
+    boundingBox: [BACK_WINDOW_HALF_X, BACK_WINDOW_HALF_Y, BACK_WINDOW_FRAME_HZ],
   });
 
   // Keyhole veil pair. Each veil is a thin opaque dark slab matching the
   // keyhole's full silhouette (circle + slot), parked inside the bore on
   // its region's side of the door. Region-tagged so each is invisible to
-  // the other side; collides:false so the fish swims through.
+  // the other side; collides:false so the fish swims through. AABB
+  // covers the 2D keyhole silhouette in XY plus the slab thickness in Z;
+  // half-Y rounds up to the slot-bottom distance so the bound is
+  // symmetric around `position`.
   const VEIL_HALF_Z = 0.0025;
   const veilSdf = keyholeExtrudedSdf(VEIL_HALF_Z);
-  const VEIL_BOUND_R = KEYHOLE_BOUND_R + 0.02;
+  const VEIL_BOUND_HALF = [
+    Math.max(KEY_CIRCLE_R, KEY_SLOT_HALF_W),
+    Math.max(Math.abs(KEY_CIRCLE_CY) + KEY_CIRCLE_R, Math.abs(KEY_SLOT_BOT_Y)),
+    VEIL_HALF_Z,
+  ];
   registerItem(scene, {
     name:     'keyhole-veil-kitchen',
     color:    [10, 10, 12],
     position: [KEYHOLE_X, KEYHOLE_Y, +21.85],
     sdf:      veilSdf,
     collides: false,
-    boundingRadius: VEIL_BOUND_R,
+    boundingBox: VEIL_BOUND_HALF,
     regionKey: REGION_KITCHEN,
   });
   add({
@@ -870,12 +909,13 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     position: [KEYHOLE_X, KEYHOLE_Y, +22.15],
     sdf:      veilSdf,
     collides: false,
-    boundingRadius: VEIL_BOUND_R,
+    boundingBox: VEIL_BOUND_HALF,
   });
 
   // Mountain range + foothill — registered via the same outside-tagged
   // `add` helper so mountain items participate in the cove's region
-  // cull. mountains.js owns layout + colorFn; outside.js just hands
-  // the helper through.
-  mountains.addToScene(add);
+  // cull. mountains.js owns layout + colorFn; outside.js hands the
+  // helper through plus the cove's plateau elevation (single source
+  // of truth for ground Y).
+  mountains.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
 };

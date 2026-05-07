@@ -29,6 +29,7 @@ import {
 } from '../../../core/scene.js';
 import { frameTime } from '../../../core/tracer.js';
 import { FLOOR_Y } from '../kitchen.js';
+import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
 export const REGION_MOUSEHOLE = 'mousehole';
 
@@ -58,19 +59,19 @@ const ENTRANCE_CAP_R      = 0.4;       // half-circle cap radius (= half width)
 const ENTRANCE_CENTER_Z   = +20.9;     // close to the front-left corner (front wall at z=+22)
 const ENTRANCE_HALF_W     = 0.4;       // ±0.4 in z → 0.8 wide opening
 
-// Tunnel extrusion along X. Two overlaps to satisfy the cutSDF / unionSDF
-// shared-boundary rule (>2·fishRadius = 0.4 to traverse, >hit-epsilon to
-// render):
-//   - kitchen side: extends 1 unit past the wall plane (x=-22) into the
+// Tunnel extrusion along X. Two overlaps satisfy the cutSDF / unionSDF
+// shared-boundary rule: > MIN_TRAVERSAL_OVERLAP for fish traversal, plus
+// a visual / render-cleanliness margin on top.
+//   - kitchen side: extends past the wall plane (x=-22) into the
 //     kitchen room. The kitchen room item gets the tunnel cutSDF'd from
-//     it; the overlap makes the carve open onto the wall face cleanly.
-//   - mousehole side: extends 0.5 unit past the interior box's +X face
-//     (INTERIOR_FRONT_X = -25.2) INTO the box. Without this the tunnel
-//     SDF and the box SDF would both report 0 along the shared seam, and
-//     the unionSDF would too — so the marcher would treat the back of
-//     the tunnel as a solid wall.
-const TUNNEL_KITCHEN_END_X   = -22.0 + 1.0;   // -21    (1 unit into kitchen)
-const TUNNEL_MOUSEHOLE_END_X = -25.2 - 0.5;   // -25.7  (0.5 unit into interior box)
+//     it; the extra margin makes the carve open onto the wall face cleanly.
+//   - mousehole side: extends past the interior box's +X face
+//     (INTERIOR_FRONT_X = -25.2) INTO the box. Without enough overlap,
+//     the tunnel SDF and the box SDF both report 0 along the shared seam
+//     and unionSDF does too — the marcher would treat the back of the
+//     tunnel as a solid wall.
+const TUNNEL_KITCHEN_END_X   = -22.0 + (MIN_TRAVERSAL_OVERLAP + 0.6);  // -21    (1.0 into kitchen with default fishRadius)
+const TUNNEL_MOUSEHOLE_END_X = -25.2 - (MIN_TRAVERSAL_OVERLAP + 0.1);  // -25.7  (0.5 into interior box)
 const TUNNEL_HALF_X   = (TUNNEL_KITCHEN_END_X - TUNNEL_MOUSEHOLE_END_X) / 2;
 const TUNNEL_CENTER_X = (TUNNEL_KITCHEN_END_X + TUNNEL_MOUSEHOLE_END_X) / 2;
 
@@ -124,6 +125,26 @@ const interiorBoxSdf = translateSDF(
 // the inverted-union — material everywhere except in the air shape.
 export const mouseholeAirSdf = unionSDF(interiorBoxSdf, tunnelSdf);
 const mouseholeRoomSdf = invertSDF(mouseholeAirSdf);
+
+// Bounding boxes for cullable cuts. Each fully encloses its tool's
+// material with FISH_RADIUS margin past the worst-case extent on each
+// axis — physics-traversed cuts need the mover-radius margin so the
+// fish center can never reach a position outside the bound while the
+// shortcut would still return the wrong base SDF (see cutSDFCullableBox
+// doc in core/scene.js for the full reasoning).
+//
+// TUNNEL bounds tunnelSdf (used here, carving through the kitchen room).
+// MOUSEHOLE_AIR bounds the full union (used by outside.js, carving
+// through the house-exterior wall to leave air where the secret pocket
+// + tunnel live).
+//
+// Material extents (no margin):
+//   tunnel        x∈[-25.7,-21]   y∈[-13,-12.0]  z∈[20.5,21.3]
+//   mousehole air x∈[-27.8,-21]   y∈[-13,-12]    z∈[19.2,21.8]
+const TUNNEL_BOUND_CENTER = [-23.35, -12.5, 20.9];
+const TUNNEL_BOUND_HALF   = [2.35 + FISH_RADIUS, 0.5 + FISH_RADIUS, 0.4 + FISH_RADIUS];
+export const MOUSEHOLE_AIR_BOUND_CENTER = [-24.4, -12.5, 20.5];
+export const MOUSEHOLE_AIR_BOUND_HALF   = [3.4 + FISH_RADIUS, 0.5 + FISH_RADIUS, 1.3 + FISH_RADIUS];
 
 
 // ──────────────────────────── colorFns ────────────────────────────
@@ -538,32 +559,30 @@ const starletPosterColorFn = (lpx, lpy, lpz) => {
 
 /**
  * Add the mousehole zone to the scene. Mutates the caller-supplied kitchen
- * `room` item to carve the entrance tunnel; appends mousehole-region items.
+ * `room` handle to carve the entrance tunnel; appends mousehole-region items.
  *
  * @param {import('../../../core/scene.js').Scene} scene
- * @param {{ room: import('../../../core/scene.js').Item }} kitchen
- *        Handles to kitchen items this zone needs to mutate.
+ * @param {{ room: import('../kitchen.js').KitchenHandle }} kitchen
+ *        Handles to kitchen surfaces this zone extends.
  */
 export const addToScene = (scene, { room: kitchenRoom }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_MOUSEHOLE });
 
   // Carve the entrance tunnel through the kitchen room's wall material,
-  // and also override its colorFn so the kitchen-side of the tunnel reads
-  // as tunnel-brown (matching the mousehole-side) instead of kitchen
-  // beige. Without the colorFn override the player would see beige
-  // walls just inside the entrance and brown walls deeper in — discontinuous.
-  const oldSdf = kitchenRoom.sdf;
-  kitchenRoom.sdf = cutSDF(tunnelSdf, oldSdf);
-  const oldColorFn = kitchenRoom.colorFn;
-  kitchenRoom.colorFn = (lpx, lpy, lpz) => {
-    // If we're hitting a tunnel-silhouette wall on the kitchen side,
-    // paint it the same brown as the mousehole-side tunnel walls.
+  // and override its colorFn so the kitchen-side of the tunnel reads as
+  // tunnel-brown (matching the mousehole-side) instead of kitchen beige
+  // — without the override the player would see beige walls just inside
+  // the entrance and brown walls deeper in, discontinuous. Far-from-
+  // tunnel steps (the bulk of the kitchen) skip the tunnel eval via the
+  // cullable bound under addCut.
+  kitchenRoom.addCut(tunnelSdf, TUNNEL_BOUND_CENTER, TUNNEL_BOUND_HALF);
+  kitchenRoom.addColorOverride((lpx, lpy, lpz) => {
     if (lpx >= -22 && lpx <= TUNNEL_KITCHEN_END_X && tunnelSdf(lpx, lpy, lpz) < 0.03) {
       if (lpy < INTERIOR_FLOOR_Y + 0.12) return [40, 32, 25];
       return [70, 55, 40];
     }
-    return oldColorFn ? oldColorFn(lpx, lpy, lpz) : [232, 218, 188];
-  };
+    return null;
+  });
 
   // The shell of the secret room. No boundingRadius — always considered
   // once we're in the mousehole region.
@@ -604,7 +623,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     colorFn:  bedColorFn,
     position: BED_POS,
     sdf:      boxSDF(BED_HALF),
-    boundingRadius: Math.hypot(BED_HALF[0], BED_HALF[1], BED_HALF[2]) + 0.05,
+    boundingBox: BED_HALF,
   });
 
   // Pillow at the head of the bed — a small box on top of the mattress
@@ -615,7 +634,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     color:    [249, 248, 248],
     position: [BED_POS[0] - BED_HALF[0] + PILLOW_HALF[0] + 0.02, BED_POS[1] + BED_HALF[1] + PILLOW_HALF[1], BED_POS[2]],
     sdf:      boxSDF(PILLOW_HALF),
-    boundingRadius: Math.hypot(PILLOW_HALF[0], PILLOW_HALF[1], PILLOW_HALF[2]) + 0.02,
+    boundingBox: PILLOW_HALF,
   });
 
   // Bench press in the middle of the room — a flat seat on four short
@@ -661,7 +680,11 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     color:    [50, 50, 55],
     position: BENCH_POS,
     sdf:      benchSdf,
-    boundingRadius: 0.45,
+    // Seat ±[0.20, 0.025, 0.10], legs reach to bench-local Y -0.125,
+    // uprights / barbell / weights reach to Y +0.27 and Z ±0.218 at
+    // the +X end. Symmetric AABB rounds up the worst-case half on
+    // each axis.
+    boundingBox: [0.22, 0.27, 0.218],
   });
 
   // Cheese plate — on the floor in front of the foot of the bed (NOT on
@@ -681,7 +704,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     color:    [254, 253, 251],
     position: PLATE_POS,
     sdf:      cylinderSDF(PLATE_HALF_Y, PLATE_R),
-    boundingRadius: PLATE_R + 0.02,
+    boundingBox: [PLATE_R, PLATE_HALF_Y, PLATE_R],
   });
 
   // Cheese wedge — shrunk to length 0.20, oriented so the wide butt is
@@ -736,7 +759,15 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     ),
     position: [INTERIOR_BACK_X + 0.60, INTERIOR_FLOOR_Y + REMOTE_HALF[1] + 0.002, INTERIOR_CENTER_Z - INTERIOR_HALF_Z + 0.60],
     sdf:      rotateYSDF(REMOTE_ROT_THETA, boxSDF(REMOTE_HALF)),
-    boundingRadius: Math.hypot(REMOTE_HALF[0], REMOTE_HALF[1], REMOTE_HALF[2]) + 0.02,
+    // World-AABB of the rotated box: rotation projects the X/Z
+    // half-extents onto each world axis as |c|·hx + |s|·hz / |s|·hx + |c|·hz.
+    // Y is unchanged. Even after the projection grows X/Z, Y stays
+    // at the slab's 0.012 — most of the win.
+    boundingBox: [
+      remoteRotC * REMOTE_HALF[0] + remoteRotS * REMOTE_HALF[2],
+      REMOTE_HALF[1],
+      remoteRotS * REMOTE_HALF[0] + remoteRotC * REMOTE_HALF[2],
+    ],
   });
 
   // TV — old-school CRT cabinet sitting on the floor NEAR (but not
@@ -767,7 +798,10 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     colorFn:  tvColorFn,
     position: TV_POS,
     sdf:      tvSdf,
-    boundingRadius: 0.40,
+    // Body box ±[0.10, 0.10, 0.13] plus antennas reaching up to item-
+    // local Y +0.32 with X reach -0.07 and Z reach ±0.10 (with 0.005
+    // capsule radius). Symmetric AABB pads -Y / +X with empty space.
+    boundingBox: [0.10, 0.325, 0.13],
   });
 
   // Focused TV glow — bright haze sphere just in front of the screen.
@@ -794,7 +828,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     colorFn:  withPosterLights(cowboyPosterColorFn),
     position: [-27.0, POSTER_Y, POSTER_Z],
     sdf:      boxSDF(POSTER_HALF),
-    boundingRadius: Math.hypot(POSTER_HALF[0], POSTER_HALF[1], POSTER_HALF[2]) + 0.02,
+    boundingBox: POSTER_HALF,
   });
   add({
     name:     'mousehole-poster-starlet',
@@ -802,7 +836,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     colorFn:  withPosterLights(starletPosterColorFn),
     position: [-26.0, POSTER_Y, POSTER_Z],
     sdf:      boxSDF(POSTER_HALF),
-    boundingRadius: Math.hypot(POSTER_HALF[0], POSTER_HALF[1], POSTER_HALF[2]) + 0.02,
+    boundingBox: POSTER_HALF,
   });
 
   // Popcorn — main bumpy kernel + scattered crumbs on the floor in front
@@ -885,13 +919,14 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
   };
 
   // Web 1: back-left upper corner (above the bed area). Six-spoke,
-  // two-ring, slightly bigger.
+  // two-ring, slightly bigger. Web is a flat fan in the YZ plane;
+  // X half is just the capsule stroke radius.
   add({
     name:     'mousehole-web-back',
     color:    [225, 225, 225],
     position: [INTERIOR_BACK_X + 0.06, INTERIOR_CEILING_Y - 0.10, +21.7],
     sdf:      buildWebSdf({ radius: 0.22, stroke: 0.012, spokes: 6, rings: [0.10, 0.18] }),
-    boundingRadius: 0.28,
+    boundingBox: [0.012, 0.22, 0.22],
   });
 
   // Web 2: front-left upper corner (above the TV). Five-spoke, single-
@@ -901,7 +936,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     color:    [225, 225, 225],
     position: [INTERIOR_FRONT_X - 0.06, INTERIOR_CEILING_Y - 0.10, +21.7],
     sdf:      buildWebSdf({ radius: 0.18, stroke: 0.010, spokes: 5, rings: [0.11], angleOffset: Math.PI / 5 }),
-    boundingRadius: 0.23,
+    boundingBox: [0.010, 0.18, 0.18],
   });
 
   // Red carpet — hallway runner along the tunnel floor only. Retracted
@@ -924,7 +959,7 @@ export const addToScene = (scene, { room: kitchenRoom }) => {
     position: [(CARPET_X_START + CARPET_X_END) / 2, -12.98, +20.9],
     sdf:      boxSDF([CARPET_HALF_X, 0.005, CARPET_HALF_Z]),
     collides: false,
-    boundingRadius: Math.hypot(CARPET_HALF_X, 0.005, CARPET_HALF_Z) + 0.02,
+    boundingBox: [CARPET_HALF_X, 0.005, CARPET_HALF_Z],
     regionKey: REGION_MOUSEHOLE,
   });
 };
