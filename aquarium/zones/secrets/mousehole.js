@@ -27,7 +27,7 @@ import {
   unionSDF, intersectionSDF, smoothUnionSDF, cutSDF, invertSDF,
   translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../../core/scene.js';
-import { frameTime } from '../../../core/tracer.js';
+import { frameTime, frameTimeSec } from '../../../core/tracer.js';
 import { FLOOR_Y } from '../kitchen.js';
 import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
@@ -40,8 +40,8 @@ export const REGION_MOUSEHOLE = 'mousehole';
 // the mousehole zone. Without these bounds, a fast fish drifting to
 // e.g. (-30, +14, 21) would be tagged mousehole and physics would shove
 // it into the actual interior. Bounds chosen to cover:
-//   - tunnel        x ∈ [-25.7, -21],  y ∈ [-13, -12.4], z ∈ [20.5, 21.3]
-//   - interior box  x ∈ [-27.8, -25.2], y ∈ [-13, -12],   z ∈ [19.2, 21.8]
+//   - tunnel        x ∈ [-25.7, -21],  y ∈ [-13, -12.0], z ∈ [20.5, 21.3]
+//   - interior box  x ∈ [-27.8, -25.2], y ∈ [-13, -12.0], z ∈ [19.2, 21.8]
 // plus a small margin in each direction.
 export const isInMousehole = (px, py, pz) =>
   px >= -27.8 && px <= -22 &&
@@ -140,7 +140,7 @@ const mouseholeRoomSdf = invertSDF(mouseholeAirSdf);
 //
 // Material extents (no margin):
 //   tunnel        x∈[-25.7,-21]   y∈[-13,-12.0]  z∈[20.5,21.3]
-//   mousehole air x∈[-27.8,-21]   y∈[-13,-12]    z∈[19.2,21.8]
+//   mousehole air x∈[-27.8,-21]   y∈[-13,-12.0]  z∈[19.2,21.8]
 const TUNNEL_BOUND_CENTER = [-23.35, -12.5, 20.9];
 const TUNNEL_BOUND_HALF   = [2.35 + FISH_RADIUS, 0.5 + FISH_RADIUS, 0.4 + FISH_RADIUS];
 export const MOUSEHOLE_AIR_BOUND_CENTER = [-24.4, -12.5, 20.5];
@@ -215,7 +215,7 @@ const tvColorFn = (lpx, lpy, lpz) => {
 // room ambient glow (filling the interior) read from this so they pulse
 // in lockstep.
 const glowPulse = () => {
-  const t = frameTime / 1000;
+  const t = frameTimeSec;
   return 0.5 + 0.5 * Math.sin(t * 7 + Math.sin(t * 13) * 2);
 };
 
