@@ -127,11 +127,11 @@ export const bindPhysics = ({ camera, scene, fishRadius = FISH_RADIUS }) => {
         for (let i = 0; i < scene.length; i++) {
           const item = scene[i];
           if (item.collides === false) continue;   // fish swims through
-          if (nRegions > 0 && item.regionKey != null) {
+          if (nRegions > 0 && item.regionKey !== null) {
             const rk = item.regionKey;
             const set = item._regionKeySet;
             let inRegion = false;
-            if (set !== undefined) {
+            if (set !== null) {
               for (let j = 0; j < nRegions; j++) {
                 if (set.has(touchedRegions[j])) { inRegion = true; break; }
               }

@@ -26,8 +26,8 @@
 //      enclosing room walls).
 //
 // Hot-loop allocations (output buffer, candidates list, inside list) are
-// hoisted to module-level reusable typed arrays / arrays — zero per-frame
-// allocations in the steady state.
+// hoisted to module-level reusable typed arrays / arrays — the tracer's
+// hot loop is allocation-free in the steady state.
 
 import { sdfGrad } from './scene.js';
 
@@ -112,9 +112,9 @@ const ensureRegionBuckets = (scene) => {
       const item = scene[i];
       const rk  = item.regionKey;
       const set = item._regionKeySet;
-      if (rk == null) {
+      if (rk === null) {
         bucket.push(item);                        // no regionKey: visible from everywhere
-      } else if (set !== undefined) {
+      } else if (set !== null) {
         for (let j = 0; j < visibleSet.length; j++) {
           if (set.has(visibleSet[j])) { bucket.push(item); break; }
         }
@@ -176,7 +176,10 @@ let _byRegionShadingForLighting = null;
  *  evaluations, and they all want the same frame timestamp. Exported as a
  *  live binding so consumers `import { frameTime } from '../core/tracer.js'`
  *  and read the current value each call. */
-export let frameTime = 0;
+export let frameTime    = 0;
+/** Same value as `frameTime` but in seconds. Hoisted so consumers don't
+ *  re-divide by 1000 per-pixel; same live-binding pattern. */
+export let frameTimeSec = 0;
 
 
 /**
@@ -188,7 +191,8 @@ export let frameTime = 0;
  * @param {number} dx @param {number} dy @param {number} dz  unit-length direction
  * @param {Item[]} scene                  per-ray candidate items (already filtered;
  *                                        no `invisible` items, items with
- *                                        non-intersecting bounding spheres dropped)
+ *                                        non-intersecting bounding spheres or
+ *                                        boxes dropped)
  * @param {number} sceneLen               valid prefix length of `scene`
  * @param {number} lx @param {number} ly @param {number} lz  unit lightDir
  * @param {number} ambient
@@ -240,9 +244,9 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
       // pass. The Array.isArray dispatch lives at registration, not
       // per-step.
       const rk = item.regionKey;
-      if (region !== null && rk != null && rk !== region) {
+      if (region !== null && rk !== null && rk !== region) {
         const set = item._regionKeySet;
-        if (set === undefined || !set.has(region)) continue;
+        if (set === null || !set.has(region)) continue;
       }
       // Manual scan of the (typically tiny) inside list — faster than
       // Array.prototype.includes and avoids its iterator allocation.
@@ -286,10 +290,10 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
         if (ndotl > 0) brightness += (1 - hAmbient) * ndotl;
       }
 
-      const c = nearestItem.colorFn
+      const c = nearestItem.colorFn !== null
         ? nearestItem.colorFn(lpx, lpy, lpz)
         : nearestItem.color;
-      const opacity = nearestItem.opacity ?? 1;
+      const opacity = nearestItem.opacity;
       const w = opacity * remaining;
       accR += c[0] * brightness * w;
       accG += c[1] * brightness * w;
@@ -338,9 +342,16 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   const ox = origin[0], oy = origin[1], oz = origin[2];
   const N = directions.length;
 
+  // Resolve the camera region once per trace — the byRegion-maxDist
+  // lookup and the visibleRegions bucket lookup both want it. (It's
+  // also re-derived per-step inside marchRay because the SHADING side
+  // of byRegion keys off the hit point's region, not the camera's;
+  // they're distinct concerns.)
+  const cameraRegion = scene.regionFn ? scene.regionFn(ox, oy, oz) : null;
+
   // Per-region lighting setup. Two distinct concerns:
   //   - maxDist is a per-RAY cap, can't sensibly vary mid-march, so the
-  //     ray-origin's region picks it (one regionFn call per trace).
+  //     ray-origin's region picks it.
   //   - lightDir + ambient affect SHADING, which only matters at the
   //     hit point; using the camera's region for them produces a jarring
   //     flip when crossing a boundary. Pre-merge each region's shading
@@ -349,9 +360,8 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   // background is per-trace too (it modulates leftover-alpha on the ray
   // as a whole; not worth a per-region nuance).
   let originMaxDist = lighting.maxDist;
-  if (lighting.byRegion && scene.regionFn) {
-    const region = scene.regionFn(ox, oy, oz);
-    const override = lighting.byRegion[region];
+  if (lighting.byRegion && cameraRegion !== null) {
+    const override = lighting.byRegion[cameraRegion];
     if (override && override.maxDist !== undefined) originMaxDist = override.maxDist;
 
     if (_byRegionShadingForLighting !== lighting) {
@@ -382,9 +392,10 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
     _outBuffer = new Float32Array(3 * N);
   }
 
-  _regionFn = scene.regionFn || null;
-  _maxDist  = originMaxDist ?? MAX_DIST;
-  frameTime = performance.now();
+  _regionFn    = scene.regionFn || null;
+  _maxDist     = originMaxDist ?? MAX_DIST;
+  frameTime    = performance.now();
+  frameTimeSec = frameTime / 1000;
 
   // Per-trace pre-cull: if the scene declares which regions are reachable
   // from each region (visibleRegions), use the precomputed candidate list
@@ -392,9 +403,9 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   // scene; the trace-time work is just an O(1) lookup.
   let activeScene = scene;
   let activeLen   = scene.length;
-  if (scene.visibleRegions && scene.regionFn) {
+  if (scene.visibleRegions && cameraRegion !== null) {
     ensureRegionBuckets(scene);
-    const bucket = _bucketsByRegion[scene.regionFn(ox, oy, oz)];
+    const bucket = _bucketsByRegion[cameraRegion];
     if (bucket !== undefined) {
       activeScene = bucket;
       activeLen   = bucket.length;
@@ -425,7 +436,7 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
       const bb = item.boundingBox;
       const r  = item.boundingRadius;
 
-      if (bb !== undefined) {
+      if (bb !== null) {
         // Slab method — line vs AABB. tEnter/tExit converge to the
         // intersection range across the three axis slabs; reject if the
         // range is empty or fully behind the ray origin. Branch on
@@ -469,7 +480,7 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
         continue;
       }
 
-      if (r == null) {
+      if (r === null) {
         _candidates[nc++] = item;
         continue;
       }

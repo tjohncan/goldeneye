@@ -62,13 +62,13 @@
  *                           // a regionKey are always considered — for
  *                           // truly scene-spanning surfaces (enclosing
  *                           // shells, ground planes, sky shells).
- *   _regionKeySet?: Set<RegionKey>,
- *                           // internal: populated by registerItem when
- *                           // regionKey is an array, so per-step / per-
- *                           // iteration region filters can use Set.has()
- *                           // instead of dispatching on Array.isArray +
- *                           // indexOf. Don't set manually — registerItem
- *                           // owns this field.
+ *   _regionKeySet: Set<RegionKey> | null,
+ *                           // internal: assigned to a Set by registerItem
+ *                           // when regionKey is an array, else null. Always
+ *                           // present so every Item shares a hidden class
+ *                           // (the per-step/per-iteration filters branch
+ *                           // on `=== null`). Don't set manually —
+ *                           // registerItem owns this field.
  * }} Item
  */
 
@@ -105,19 +105,45 @@ export const createScene = () => [];
 /**
  * @param {Scene} scene
  * @param {Item} item
- * @returns {Item} the item just registered (same reference passed in)
+ * @returns {Item} the registered Item — a freshly-constructed normalized
+ *          object, NOT the input reference. See body comment.
  */
 export const registerItem = (scene, item) => {
-  // Pre-classify the regionKey shape so the per-step region filter in
-  // the marcher can avoid Array.isArray on every per-item check. Items
-  // with array regionKey get a Set sibling for fast has() lookup;
-  // single-key and no-key items skip the field entirely (the hot path
-  // distinguishes via `_regionKeySet === undefined`).
-  if (Array.isArray(item.regionKey)) {
-    item._regionKeySet = new Set(item.regionKey);
-  }
-  scene.push(item);
-  return item;
+  // Construct a fresh object with every field assigned in canonical
+  // order, so every registered Item shares the SAME V8 hidden class.
+  // The per-step marcher reads (item.sdf, item.regionKey,
+  // item._regionKeySet, item.colorFn, item.opacity, item.invisible,
+  // item.collides, item.boundingRadius, item.boundingBox) every
+  // iteration; uniform shape collapses the inline caches at each of
+  // those reads to monomorphic.
+  //
+  // Why a fresh object instead of mutating the input: V8 hidden
+  // classes track field add ORDER, not just the field set. Two items
+  // whose inputs differ in which fields are omitted (one has colorFn,
+  // the other has boundingRadius) reach the same final field set via
+  // different transition paths and end up with different hidden
+  // classes. Building from scratch with an explicit field order
+  // unifies them.
+  //
+  // Returned object is the one pushed to the scene; callers that need
+  // to retain a reference (e.g. for later mutation, or to wrap in
+  // handles) should capture the return value rather than the input.
+  const normalized = {
+    name:           item.name           ?? null,
+    color:          item.color,
+    colorFn:        item.colorFn        ?? null,
+    position:       item.position,
+    sdf:            item.sdf,
+    invisible:      item.invisible      ?? false,
+    opacity:        item.opacity        ?? 1,
+    collides:       item.collides       ?? true,
+    boundingRadius: item.boundingRadius ?? null,
+    boundingBox:    item.boundingBox    ?? null,
+    regionKey:      item.regionKey      ?? null,
+    _regionKeySet:  Array.isArray(item.regionKey) ? new Set(item.regionKey) : null,
+  };
+  scene.push(normalized);
+  return normalized;
 };
 
 
@@ -167,11 +193,20 @@ export const capsuleSDF = (halfHeight, radius) => (px, py, pz) => {
  * Capsule between two arbitrary 3D points with the given radius — a smooth
  * tube with hemispherical caps. Cleaner than chains of sphere SDFs for limbs
  * and connectors; no bulging at segment-center points.
+ *
+ * Coincident endpoints degrade gracefully to a sphere — no NaN from the
+ * 0/0 in the projection onto a zero-length segment.
  */
 /** @type {(a: Vec3, b: Vec3, radius: number) => SDF} */
 export const capsuleBetweenSDF = ([ax, ay, az], [bx, by, bz], radius) => {
   const dx = bx - ax, dy = by - ay, dz = bz - az;
   const lenSq = dx * dx + dy * dy + dz * dz;
+  if (lenSq < 1e-12) {
+    return (px, py, pz) => {
+      const ex = px - ax, ey = py - ay, ez = pz - az;
+      return Math.sqrt(ex * ex + ey * ey + ez * ez) - radius;
+    };
+  }
   return (px, py, pz) => {
     const lpx = px - ax, lpy = py - ay, lpz = pz - az;
     let t = (lpx * dx + lpy * dy + lpz * dz) / lenSq;
@@ -209,12 +244,14 @@ export const cylinderSDF = (halfHeight, radius) => (px, py, pz) => {
  * continues upward, so a viewer inside the bowl can look up through the
  * open top into whatever else is in the scene above.
  *
- * Returns a regular SDF (negative inside the wall material, positive in
- * air). Marching outward from the interior: the SDF approaches zero at
- * the inner wall (r = innerR), goes negative inside the shell, and
- * returns to positive outside (r > outerR). Above the rim, the
- * (py - rimY) term keeps the SDF positive everywhere — the open top
- * never reads as a hit.
+ * Returns a regular SDF (negative inside the wall material, positive
+ * in air). Three regimes for points below the rim:
+ *   - bowl interior (r < innerR): SDF positive, decreasing toward zero
+ *     as r approaches innerR (the inner wall).
+ *   - inside shell material (innerR < r < outerR): SDF negative.
+ *   - outside the bowl (r > outerR): SDF positive again.
+ * Above the rim (py > rimY) the SDF is positive everywhere — the open
+ * top never reads as a hit.
  */
 /** @type {(opts: { outerR: number, innerR: number, rimY: number }) => SDF} */
 export const openTopBowlSDF = ({ outerR, innerR, rimY }) => (px, py, pz) => {

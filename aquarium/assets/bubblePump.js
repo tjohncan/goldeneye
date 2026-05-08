@@ -48,8 +48,11 @@ export const createBubblePump = ({
   /** @type {Array<{ item: Item, active: boolean, vy: number }>} */
   const pool = [];
   for (let i = 0; i < capacity; i++) {
-    /** @type {Item} */
-    const item = {
+    // Capture the registerItem return value — registerItem normalizes
+    // by constructing a fresh object, so the input reference and the
+    // registered object would otherwise diverge (later mutations to
+    // .position / .invisible / .sdf wouldn't reach the renderer).
+    const item = registerItem(scene, {
       name:      `bubble-${i}`,
       color:     BUBBLE_COLOR,
       position:  [position[0], surfaceY + 1, position[2]],   // parked above surface
@@ -59,8 +62,7 @@ export const createBubblePump = ({
       opacity:   0.3,      // see-through, with a hint of bubble color tinting the background
       boundingRadius: maxSize,  // tight bound — bubbles are visually tiny, so the per-ray bounding-sphere filter drops them aggressively when off-axis
       regionKey: REGION_BOWL,   // bubbles live entirely inside the bowl interior
-    };
-    registerItem(scene, item);
+    });
     pool.push({ item, active: false, vy: 0 });
   }
 
