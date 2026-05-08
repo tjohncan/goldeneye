@@ -21,11 +21,10 @@
 // heights for the union shape, giving each mountain a distinct
 // silhouette.
 //
-// Performance: bounding box anchored at MID-HEIGHT (not base) so
-// the world origin sits OUTSIDE each mountain's bound and the
-// per-ray cull actually rejects mountains the ray doesn't point at.
-// With base anchoring, the bound would cover the world origin and
-// every ray would be forced to consider every mountain per-step.
+// Performance: position at MID-HEIGHT lets the bounding-box half on Y
+// be just peakH/2+1 instead of peakH+1 (which a base-anchored bound
+// would need to enclose the peak). Halves the Y-axis bound size, so
+// the per-ray slab cull rejects mountains earlier.
 
 // Peak radius — how far the peak point sits from world origin. Set
 // past the dome's outer shell (1030) so mountains extend through the
