@@ -33,6 +33,13 @@ const ensureStyles = () => {
   document.head.appendChild(style);
 };
 
+// 256-entry zero-padded hex lookup. Keeps the per-cell paint write to one
+// '#' + 3 array reads + 3 string concats — no template-literal allocation,
+// no .toString(16) call, and the browser's CSS parser handles #RRGGBB
+// faster than rgb(...).
+const HEX = new Array(256);
+for (let i = 0; i < 256; i++) HEX[i] = (i < 16 ? '0' : '') + i.toString(16);
+
 export class Painter {
   /**
    * @param {{
@@ -123,7 +130,7 @@ export class Painter {
       if (g > 255) g = 255; else if (g < 0) g = 0;
       if (b > 255) b = 255; else if (b < 0) b = 0;
 
-      styles[i].backgroundColor = `rgb(${r | 0},${g | 0},${b | 0})`;
+      styles[i].backgroundColor = '#' + HEX[r | 0] + HEX[g | 0] + HEX[b | 0];
     }
   }
 }
