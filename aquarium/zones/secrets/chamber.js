@@ -25,7 +25,7 @@ import {
   unionSDF, intersectionSDF, invertSDF,
   translateSDF, rotateXSDF,
 } from '../../../core/scene.js';
-import { frameTime } from '../../../core/tracer.js';
+import { frameTime, frameTimeSec } from '../../../core/tracer.js';
 import { REGION_KITCHEN } from '../kitchen.js';
 import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
@@ -156,10 +156,12 @@ export const CHAMBER_AIR_BOUND_CENTER = [SUN_X, SUN_Y, (CHAMBER_BACK_Z + PIPE_Z_
 export const CHAMBER_AIR_BOUND_HALF   = [1.45 + FISH_RADIUS, 0.7 + FISH_RADIUS, 2.5 + FISH_RADIUS];
 
 // Gyroid — a triply-periodic minimal surface. The unscaled function
-// returns a value that's not a true SDF (not Lipschitz-1), but
-// multiplying by a small factor makes it conservative enough for the
-// marcher. Bounded inside a sphere so it forms a finite blob rather
-// than tiling the chamber to infinity.
+// isn't Lipschitz-1; max gradient is ~2K√3 ≈ 24. True conservative
+// scaling would be ~1/24, but we use 0.20 — about 5× generous.
+// Empirically the lattice features at K=7 are coarse enough that the
+// occasional overshoot reads as faint sparkle rather than holes; if
+// you tighten K, also tighten this scale. Bounded inside a sphere so
+// it forms a finite blob rather than tiling the chamber to infinity.
 const GYROID_K = 7.0;                          // frequency — higher = more lattice cells
 const GYROID_R = 0.77;                         // bounding sphere radius
 // Rotation rates around each axis. Coprime-ish irrationals so the three
@@ -178,7 +180,7 @@ let _gxC = 0, _gxS = 0, _gyC = 0, _gyS = 0, _gzC = 0, _gzS = 0;
 const gyroidSdf = intersectionSDF(
   (px, py, pz) => {
     if (frameTime !== _gyroidCachedTime) {
-      const t = frameTime / 1000;
+      const t = frameTimeSec;
       _gxC = Math.cos(t * GYROID_RATE_X); _gxS = Math.sin(t * GYROID_RATE_X);
       _gyC = Math.cos(t * GYROID_RATE_Y); _gyS = Math.sin(t * GYROID_RATE_Y);
       _gzC = Math.cos(t * GYROID_RATE_Z); _gzS = Math.sin(t * GYROID_RATE_Z);
@@ -272,7 +274,7 @@ const marqueeColorFn = (lpx, lpy, lpz) => {
   if (strip_lpy < 0 || strip_lpy > MARQUEE_GLYPH_H) return [12, 8, 18];
 
   // Scroll: time-based offset, then wrap into [0, MARQUEE_TOTAL_W).
-  const t = frameTime / 1000;
+  const t = frameTimeSec;
   const offsetX = lpx + t * SCROLL_SPEED;
   const wrappedX = ((offsetX % MARQUEE_TOTAL_W) + MARQUEE_TOTAL_W) % MARQUEE_TOTAL_W;
 
@@ -363,9 +365,31 @@ const isOnSparkFace = (lpx, lpy, lpz) =>
 // caller consumes immediately, no allocation per chamber-wall hit.
 const _sparkOut = [0, 0, 0];
 
-const accumulateSparks = (lpx, lpy, lpz, t) => {
+// Per-frame spark cache. Each active spark's surface position and per-
+// channel intensity (color × fade — both constant across hits within a
+// frame) are precomputed once, keyed on frameTime; the per-hit loop
+// then reduces to a distance test + radial² blend per spark. Same
+// shape as clouds.js's _cachedStates and the gyroid trig cache above.
+//
+// Cache key is `frameTime` (the module-level live binding), not the `t`
+// parameter — callers always derive `t` from frameTime, so the two
+// identify the same frame; an out-of-band caller passing a different
+// `t` would read a stale cache, but that pattern doesn't exist here.
+const _sparkSx = new Array(SPARK_LOOKBACK).fill(0);
+const _sparkSy = new Array(SPARK_LOOKBACK).fill(0);
+const _sparkSz = new Array(SPARK_LOOKBACK).fill(0);
+const _sparkCR = new Array(SPARK_LOOKBACK).fill(0);
+const _sparkCG = new Array(SPARK_LOOKBACK).fill(0);
+const _sparkCB = new Array(SPARK_LOOKBACK).fill(0);
+let _sparkCacheTime = -1;
+let _sparkCacheLen  = 0;
+
+const refreshSparkCache = (t) => {
+  if (frameTime === _sparkCacheTime) return;
+  _sparkCacheTime = frameTime;
+
   const currentEpoch = Math.floor(t / SPARK_INTERVAL);
-  let r = 0, g = 0, b = 0;
+  let n = 0;
   for (let i = 0; i < SPARK_LOOKBACK; i++) {
     const epoch = currentEpoch - i;
     const age = t - epoch * SPARK_INTERVAL;
@@ -397,18 +421,37 @@ const accumulateSparks = (lpx, lpy, lpz, t) => {
       sz = CHAMBER_CENTER_Z - CHAMBER_HALF_Z + v * 2 * CHAMBER_HALF_Z;
     }
 
-    const dx = lpx - sx, dy = lpy - sy, dz = lpz - sz;
-    const d2 = dx * dx + dy * dy + dz * dz;
-    if (d2 >= SPARK_RADIUS * SPARK_RADIUS) continue;
-
-    const radial = 1 - Math.sqrt(d2) / SPARK_RADIUS;
-    const fade   = 1 - age / SPARK_LIFE;
-    const intensity = radial * radial * fade;
-
+    // Pre-multiply the spark color by its temporal fade — the radial
+    // factor is the only term left that depends on the hit point.
+    const fade = 1 - age / SPARK_LIFE;
     const c = SPARK_COLORS[Math.floor(sparkHash01(epoch, 3) * SPARK_COLORS.length)];
-    r += c[0] * intensity;
-    g += c[1] * intensity;
-    b += c[2] * intensity;
+    _sparkSx[n] = sx;
+    _sparkSy[n] = sy;
+    _sparkSz[n] = sz;
+    _sparkCR[n] = c[0] * fade;
+    _sparkCG[n] = c[1] * fade;
+    _sparkCB[n] = c[2] * fade;
+    n++;
+  }
+  _sparkCacheLen = n;
+};
+
+const SPARK_RADIUS_SQ  = SPARK_RADIUS * SPARK_RADIUS;
+const SPARK_INV_RADIUS = 1 / SPARK_RADIUS;
+
+const accumulateSparks = (lpx, lpy, lpz, t) => {
+  refreshSparkCache(t);
+  let r = 0, g = 0, b = 0;
+  for (let i = 0; i < _sparkCacheLen; i++) {
+    const dx = lpx - _sparkSx[i], dy = lpy - _sparkSy[i], dz = lpz - _sparkSz[i];
+    const d2 = dx * dx + dy * dy + dz * dz;
+    if (d2 >= SPARK_RADIUS_SQ) continue;
+
+    const radial = 1 - Math.sqrt(d2) * SPARK_INV_RADIUS;
+    const intensity = radial * radial;
+    r += _sparkCR[i] * intensity;
+    g += _sparkCG[i] * intensity;
+    b += _sparkCB[i] * intensity;
   }
   _sparkOut[0] = r;
   _sparkOut[1] = g;
@@ -434,7 +477,7 @@ const chamberRoomColorFn = (lpx, lpy, lpz) => {
   }
 
   if (isOnSparkFace(lpx, lpy, lpz)) {
-    const sparks = accumulateSparks(lpx, lpy, lpz, frameTime / 1000);
+    const sparks = accumulateSparks(lpx, lpy, lpz, frameTimeSec);
     r += sparks[0];
     g += sparks[1];
     b += sparks[2];
@@ -449,7 +492,7 @@ const chamberRoomColorFn = (lpx, lpy, lpz) => {
 // color. Pulses through the entire chamber atmosphere like the gyroid
 // is leaking light into the room.
 const chamberGlowColorFn = (lpx, lpy, lpz) => {
-  const t = frameTime / 1000;
+  const t = frameTimeSec;
   const r = 70 + 90 * Math.sin(t * 1.8);
   const g = 70 + 90 * Math.sin(t * 2.55 + 2.1);
   const b = 90 + 90 * Math.sin(t * 3.15 + 4.3);
@@ -459,7 +502,8 @@ const chamberGlowColorFn = (lpx, lpy, lpz) => {
 const gyroidColorFn = (lpx, lpy, lpz) => {
   // Iridescent palette keyed off local position — different per ridge,
   // mutating fast enough for the gyroid to feel actively alive.
-  const t = frameTime / 500;
+  // (frameTime / 500 === frameTimeSec * 2)
+  const t = frameTimeSec * 2;
   const r = 100 + 100 * Math.sin(lpx * 8 + t);
   const g = 100 + 100 * Math.sin(lpy * 8 + t * 1.3);
   const b = 150 + 100 * Math.sin(lpz * 8 + t * 0.7);
