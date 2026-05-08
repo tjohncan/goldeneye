@@ -23,6 +23,13 @@
 
 import * as r3 from '../core/r3.js';
 
+// Hoisted axis vectors — passed to r3 ops every frame; module-scope
+// constants avoid a fresh literal allocation per tick. r3 is purely
+// functional and doesn't mutate inputs, so sharing these is safe.
+const Y_AXIS  = [0, 1, 0];
+const X_AXIS  = [1, 0, 0];
+const FORWARD = [0, 0, -1];
+
 const applyDeadzone = (v, dz) => {
   if (dz <= 0) return v;
   if (Math.abs(v) < dz) return 0;
@@ -75,6 +82,7 @@ export const bindControls = ({
   let suspendedUntil = 0;
 
   const onDown = (e) => {
+    if (hostRect === null) refreshHostRect();
     pointers.set(e.pointerId, {
       x:       e.clientX,
       y:       e.clientY,
@@ -90,6 +98,25 @@ export const bindControls = ({
   const onUp = (e) => { pointers.delete(e.pointerId); };
   const onContextMenu = (e) => e.preventDefault();
 
+  // Clear pointer state on focus loss. Without this, alt-tabbing away
+  // mid-press leaves a stale pointer in the map: when the OS swallows
+  // the corresponding pointerup, on return the fish keeps accelerating
+  // toward whatever target the cached x/y maps to. Velocity decays
+  // through the empty-pointers branch on the next tick, so we just
+  // need to drop the stale entries.
+  const onLoseFocus = () => pointers.clear();
+  const onVisibilityChange = () => { if (document.hidden) onLoseFocus(); };
+
+  // Cache the host's layout rect. update() reads it every tick a pointer
+  // is held; getBoundingClientRect() is usually cheap when no DOM mutations
+  // have invalidated layout, but caching is free insurance and keeps the
+  // hot path off the layout engine entirely. Refresh on resize and lazily
+  // on pointerdown if uninitialized.
+  /** @type {DOMRect | null} */
+  let hostRect = null;
+  const refreshHostRect = () => { hostRect = host.getBoundingClientRect(); };
+  window.addEventListener('resize', refreshHostRect);
+
   // Bind to window so the entire page is the touchpad — clicks outside the
   // visible viewing circle still steer; their position is clamped to ±1
   // (extreme edge of the disk) in the update loop. Contextmenu also goes
@@ -100,6 +127,8 @@ export const bindControls = ({
   window.addEventListener('pointerup',     onUp);
   window.addEventListener('pointercancel', onUp);
   window.addEventListener('contextmenu',   onContextMenu);
+  window.addEventListener('blur',          onLoseFocus);
+  document.addEventListener('visibilitychange', onVisibilityChange);
 
   return {
     update(timeMs) {
@@ -117,11 +146,11 @@ export const bindControls = ({
         // input applies immediately on the next tick.
         velFwd = velYaw = velPitch = 0;
       } else if (pointers.size > 0) {
-        const rect = host.getBoundingClientRect();
-        const cx = rect.left + rect.width  / 2;
-        const cy = rect.top  + rect.height / 2;
-        const halfW = rect.width  / 2;
-        const halfH = rect.height / 2;
+        if (hostRect === null) refreshHostRect();
+        const cx = hostRect.left + hostRect.width  / 2;
+        const cy = hostRect.top  + hostRect.height / 2;
+        const halfW = hostRect.width  / 2;
+        const halfH = hostRect.height / 2;
 
         // Average steering across all active pointers. Each pointer's
         // position is normalized to ±1 against the host rect and clamped at
@@ -163,13 +192,13 @@ export const bindControls = ({
       }
 
       if (Math.abs(velYaw) > 1e-6) {
-        camera.rotateLocal(r3.quatAxisAngle([0, 1, 0], velYaw * dt));
+        camera.rotateLocal(r3.quatAxisAngle(Y_AXIS, velYaw * dt));
       }
       if (Math.abs(velPitch) > 1e-6) {
-        camera.rotateLocal(r3.quatAxisAngle([1, 0, 0], velPitch * dt));
+        camera.rotateLocal(r3.quatAxisAngle(X_AXIS, velPitch * dt));
       }
       if (Math.abs(velFwd) > 1e-6) {
-        const forward = r3.quatRotate(camera.orientation, [0, 0, -1]);
+        const forward = r3.quatRotate(camera.orientation, FORWARD);
         camera.position = r3.add(camera.position, r3.scale(forward, velFwd * dt));
       }
     },
@@ -182,6 +211,9 @@ export const bindControls = ({
       window.removeEventListener('pointerup',     onUp);
       window.removeEventListener('pointercancel', onUp);
       window.removeEventListener('contextmenu',   onContextMenu);
+      window.removeEventListener('blur',          onLoseFocus);
+      window.removeEventListener('resize',        refreshHostRect);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
     },
   };
 };
