@@ -39,7 +39,7 @@ import {
 } from './chamber.js';
 import { sampleClouds }    from '../../assets/clouds.js';
 import * as mountains      from '../../assets/mountains.js';
-import { frameTime }       from '../../../core/tracer.js';
+import { frameTimeSec }    from '../../../core/tracer.js';
 import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
 export const REGION_OUTSIDE = 'outside';
@@ -107,6 +107,48 @@ const keyholeExtrudedSdf = (halfZ) => (lpx, lpy, lpz) => {
   return Math.min(Math.max(d2d, dz), 0) + Math.sqrt(ox * ox + oz * oz);
 };
 
+// Tapered variant — same silhouette in the middle but widening
+// linearly to KEYHOLE_TAPER_SCALE over the outer KEYHOLE_TAPER_Z of
+// each end. Used ONLY by the bore (the elongated cut through the
+// door / room / house-exterior wall): the brass plates parked just
+// outside each face frame the visible keyhole at the original
+// silhouette, so the widened bore mouth stays hidden behind them
+// and the only player-perceptible effect is steering forgiveness
+// for the fish swimming through. The plate / veil cuts keep using
+// the constant-silhouette extruder above so their visible
+// silhouettes remain at the original keyhole2D dimensions.
+//
+// Why a separate factory rather than a parameterized one: applying
+// this taper to the plate (halfZ = 2.0) or veil (halfZ = 0.0025)
+// would either trigger taper across the entire plate (visibly
+// distorting the keyhole-on-plate silhouette) or evaluate at
+// negative `halfZ - taper_z` and tape every query (visibly
+// distorting the veil). The clean opt-in is to keep two factories.
+//
+// Lipschitz: scaling the silhouette by a z-dependent factor breaks
+// the SDF's strict 1-Lipschitz property along Z (the gradient now
+// has a contribution from dscale/dz × d2d). The 0.6 ramp on
+// `safety` inside the taper region keeps the marcher's step
+// distance conservative enough to converge without overshoot;
+// outside the taper, scale=1 and safety=1, so the standard
+// extruder behavior holds.
+const KEYHOLE_TAPER_Z     = 2.0;   // depth into each end over which the bore widens
+const KEYHOLE_TAPER_SCALE = 1.5;   // silhouette scale at the extrusion end
+const keyholeBoreExtrudedSdf = (halfZ) => (lpx, lpy, lpz) => {
+  const absZ = Math.abs(lpz);
+  let scale = 1, safety = 1;
+  if (absZ > halfZ - KEYHOLE_TAPER_Z) {
+    const t = Math.min(1, (absZ - (halfZ - KEYHOLE_TAPER_Z)) / KEYHOLE_TAPER_Z);
+    const tSmooth = t * t * (3 - 2 * t);
+    scale  = 1 + (KEYHOLE_TAPER_SCALE - 1) * tSmooth;
+    safety = 1 - 0.4 * tSmooth;
+  }
+  const d2d = keyhole2DSdf(lpx / scale, lpy / scale) * scale;
+  const dz  = absZ - halfZ;
+  const ox  = Math.max(d2d, 0), oz = Math.max(dz, 0);
+  return (Math.min(Math.max(d2d, dz), 0) + Math.sqrt(ox * ox + oz * oz)) * safety;
+};
+
 // Bore extends past the kitchen front wall (z=+22), through the
 // house wall, and past the cove-side plate (knob is off-axis so it
 // doesn't constrain the bore extent). Both end overlaps satisfy
@@ -120,7 +162,7 @@ const KEYHOLE_CENTER_Z  = (KEYHOLE_Z_OUTSIDE + KEYHOLE_Z_KITCHEN) / 2;
 
 const keyholeBoreWorldSdf = translateSDF(
   [KEYHOLE_X, KEYHOLE_Y, KEYHOLE_CENTER_Z],
-  keyholeExtrudedSdf(KEYHOLE_HALF_Z),
+  keyholeBoreExtrudedSdf(KEYHOLE_HALF_Z),
 );
 
 // Bounding box for cullable cuts on items the keyhole bore passes
@@ -134,11 +176,16 @@ const keyholeBoreWorldSdf = translateSDF(
 // material extent on each axis is FISH_RADIUS — physics-traversed cut
 // (see cutSDFCullableBox doc in core/scene.js for the mover-radius
 // rule).
+//
+// XY half-extents account for the tapered bore widening to
+// KEYHOLE_TAPER_SCALE near each end — bound must enclose the WORST-
+// case (widest) silhouette so the cut isn't bypassed at the tapered
+// mouths, otherwise the carve would render as solid wall there.
 const KEYHOLE_BORE_BOUND_CENTER = [KEYHOLE_X, KEYHOLE_Y, KEYHOLE_CENTER_Z];
 const KEYHOLE_BORE_BOUND_HALF   = [
-  0.55 + FISH_RADIUS,            // circle radius (= max of circle R, slot half-W)
-  0.65 + FISH_RADIUS,            // |slot bottom| (covers asymmetric Y, with slop on +Y side)
-  KEYHOLE_HALF_Z + FISH_RADIUS,  // extrusion half-length
+  0.55 * KEYHOLE_TAPER_SCALE + FISH_RADIUS,  // widened circle half-X at the bore ends
+  0.65 * KEYHOLE_TAPER_SCALE + FISH_RADIUS,  // widened |slot bottom| at the bore ends
+  KEYHOLE_HALF_Z             + FISH_RADIUS,  // extrusion half-length (taper doesn't extend Z)
 ];
 
 // Brass escutcheon plate — thin rectangular plate on each side of the
@@ -603,7 +650,7 @@ const groundColorFn = (lpx, lpy, lpz) => {
 // the surface; the gating keeps sparkles concentrated on highlights
 // rather than spread evenly. Pure colorFn — no actual displacement.
 const waterColorFn = (lpx, lpy, lpz) => {
-  const t = frameTime / 1000;
+  const t = frameTimeSec;
   const w = Math.sin(lpx * 0.15 + t * 0.40) * Math.cos(lpz * 0.18 + t * 0.30)
           + Math.sin(lpx * 0.42 - t * 0.70) * Math.cos(lpz * 0.36 + t * 0.50) * 0.5
           + Math.sin((lpx + lpz) * 0.85 + t * 1.10) * 0.3;
@@ -806,7 +853,17 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   // the marcher (beach slope's max grad ≈ (PLATEAU_Y - SEA_FLOOR_Y) /
   // (BEACH_END_R - PLATEAU_R) ≈ 37/100 = 0.37; safety factor 0.6 sits
   // well under 1/sqrt(1 + 0.37²) ≈ 0.94).
-  const groundSdf = (px, py, pz) => (py - groundHeight(px, pz)) * 0.6;
+  //
+  // Short-circuit for points well above the plateau: groundHeight never
+  // exceeds SHACK_PLATEAU_Y (the +Z hemisphere slopes DOWN to seafloor;
+  // the -Z hemisphere is plateau-flat). Sky-bound rays read this branch
+  // and skip the sqrt + smoothstep entirely. The +5 buffer keeps the
+  // shortcut SDF >= the true SDF at the boundary so the marcher never
+  // overshoots — the 0.6 multiplier already provides Lipschitz slack.
+  const groundSdf = (px, py, pz) => {
+    if (py > SHACK_PLATEAU_Y + 5) return (py - SHACK_PLATEAU_Y) * 0.6;
+    return (py - groundHeight(px, pz)) * 0.6;
+  };
   add({
     name:     'outside-ground',
     color:    [120, 100, 75],
