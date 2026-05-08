@@ -17,7 +17,7 @@
 // (center vector, tangent basis, sub-lobe layout) is cached once per
 // frame in _cachedStates so the per-pixel hot path stays trig-free.
 
-import { frameTime } from '../../core/tracer.js';
+import { frameTime, frameTimeSec } from '../../core/tracer.js';
 
 // Total cloud slots across both layers (white upper + grey lower).
 // Each layer reads 7 slots; with slot-key differentiation the two
@@ -93,7 +93,7 @@ let _cachedAtTime = -1;
 const refreshCloudCache = () => {
   if (frameTime === _cachedAtTime) return;
   _cachedAtTime = frameTime;
-  const t = frameTime / 1000;
+  const t = frameTimeSec;
 
   for (let slot = 0; slot < NUM_CLOUDS; slot++) {
     const state = _cachedStates[slot];
