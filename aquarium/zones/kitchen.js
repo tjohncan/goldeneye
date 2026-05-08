@@ -206,6 +206,9 @@ const windowColorFn = (lpx, lpy, lpz) => {
   if (lpy < hillH) return [95, 145, 85];
   const sx = lpx - 2.5, sy = lpy - 2.2;
   const sd2 = sx * sx + sy * sy;
+  // Reference color for chamber-sun-cover; this branch is reachable in
+  // the colorFn but the painted-sun core is occluded by the sun-cover
+  // disc in the rendered scene. Kept here so the cover can match.
   if (sd2 < 0.55 * 0.55) return [255, 235, 120];
   if (sd2 < 0.85 * 0.85) return [255, 220, 155];
   const c1x = lpx - (-2.2), c1y = lpy - 1.4;
