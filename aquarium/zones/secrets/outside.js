@@ -283,12 +283,28 @@ const FIRMAMENT_INNER_R = 1300;
 // window.
 const SUN_POSITION = [0, 998, 0];
 const SUN_RADIUS   = 100;
-// Camera teleports back to spawn when Y exceeds this. Set 7 units
-// past the sun's lower edge — at cove forward speed (14.4 units/sec),
-// that's about 0.5s of flight into the sun, matching the controls
-// lockout window so the teleport fires just as the screen is fully
-// engulfed in yellow.
+// Height short-circuit for the teleport trigger; combined with
+// isInsideSun() at the call site (world.js) so off-axis high-altitude
+// flight has to actually enter the sun's volume to fire. Sized 7
+// units past the sun's lower edge so a vertical approach spends about
+// 0.5s in the yellow before triggering — matches the controls lockout
+// window for a smooth handoff into the chamber.
 export const SUN_TRIGGER_Y = SUN_POSITION[1] - SUN_RADIUS + 7;
+
+const SUN_R2 = SUN_RADIUS * SUN_RADIUS;
+/**
+ * Point-in-sun predicate for the teleport trigger. world.js's
+ * `teleport.shouldTrigger` composes this with SUN_TRIGGER_Y: the
+ * height check short-circuits cheaply on the bulk of cove frames,
+ * and this sphere test confirms the camera has actually entered
+ * the sun's volume.
+ */
+export const isInsideSun = ([px, py, pz]) => {
+  const dx = px - SUN_POSITION[0];
+  const dy = py - SUN_POSITION[1];
+  const dz = pz - SUN_POSITION[2];
+  return dx * dx + dy * dy + dz * dz < SUN_R2;
+};
 
 // Ground heightfield — flat plateau around the building (where the
 // shack and the village sit), with a beach slope down to the seafloor
@@ -834,10 +850,11 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   });
 
   // Sun — over-bright sphere up near the dome's apex. Visual anchor
-  // and teleport trigger (camera Y > SUN_TRIGGER_Y → reset to spawn,
-  // wired through world.js's TELEPORT.triggerY). collides:false so the
-  // camera passes through; the teleport fires before the camera reaches
-  // the dome wall behind the sun.
+  // and teleport trigger (entering the sun's volume → reset to spawn,
+  // wired through world.js's TELEPORT.shouldTrigger via SUN_TRIGGER_Y
+  // + isInsideSun). collides:false so the camera passes through; the
+  // teleport fires before the camera reaches the dome wall behind the
+  // sun.
   add({
     name:     'outside-sun',
     color:    [765, 705, 360],

@@ -45,15 +45,16 @@ const SPAWN = {
   up:       [0, 1, 0],
 };
 
-/** Teleport pose + trigger. When the camera's Y rises above triggerY
- * (set in the outside zone — the cove sun sits high in the dome),
- * main warps the camera to this pose. `triggerY` lives on the teleport
- * object so the entry point doesn't have to import it separately. */
+/** Teleport pose + trigger. When the camera enters the cove sun (height
+ * short-circuit + sphere check, both inside teleport.shouldTrigger),
+ * main warps the camera to this pose. `shouldTrigger` lives on the
+ * teleport object so the entry point doesn't have to import its
+ * components separately. */
 const TELEPORT = {
   position: [10.5, 4.2, -25.4],
   lookAt:   [10.5, 4.2, -26.5],
   up:       [0, 1, 0],
-  triggerY: outside.SUN_TRIGGER_Y,
+  shouldTrigger: (pos) => pos[1] > outside.SUN_TRIGGER_Y && outside.isInsideSun(pos),
 };
 
 /** Lighting: sun straight up, gentle ambient. Background is black —
@@ -213,7 +214,7 @@ const VISIBLE_REGIONS = {
  *   scene:    import('../core/scene.js').Scene,
  *   speedMul: (pos: import('../core/r3.js').Vec3) => number,
  *   spawn:    { position: import('../core/r3.js').Vec3, lookAt: import('../core/r3.js').Vec3, up: import('../core/r3.js').Vec3 },
- *   teleport: { position: import('../core/r3.js').Vec3, lookAt: import('../core/r3.js').Vec3, up: import('../core/r3.js').Vec3, triggerY: number },
+ *   teleport: { position: import('../core/r3.js').Vec3, lookAt: import('../core/r3.js').Vec3, up: import('../core/r3.js').Vec3, shouldTrigger: (pos: import('../core/r3.js').Vec3) => boolean },
  *   perFrameUpdates: Array<(timeMs: number) => void>,
  * }}
  */

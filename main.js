@@ -40,13 +40,14 @@ const tick = throttle(MAX_FPS, (timeMs) => {
   controls.update(timeMs);
   physics.update();
 
-  // Sun teleport — flying high enough into the cove sun warps the
-  // camera to teleport.position. Sits AFTER physics (sees post-collision
-  // Y) and BEFORE trace (teleport reflected in this frame's render, no
-  // flash of the pre-teleport view). A pure Y threshold suffices: the
-  // cove's other regions all live well below teleport.triggerY, so the
-  // check can't false-fire from indoors.
-  if (camera.position[1] > teleport.triggerY) {
+  // Sun teleport — flying into the cove sun warps the camera to
+  // teleport.position. Sits AFTER physics (sees post-collision pose)
+  // and BEFORE trace (teleport reflected in this frame's render, no
+  // flash of the pre-teleport view). teleport.shouldTrigger combines
+  // a height short-circuit with a sphere check, so off-axis flight
+  // past the height threshold doesn't false-fire — the camera has to
+  // actually enter the sun's volume.
+  if (teleport.shouldTrigger(camera.position)) {
     camera.position    = teleport.position;
     camera.orientation = quatLookAt(teleport.position, teleport.lookAt, teleport.up);
     controls.suspend(500);
