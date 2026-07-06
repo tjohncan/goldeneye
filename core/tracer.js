@@ -41,9 +41,9 @@ import { sdfGrad } from './scene.js';
  *   ambient?:    number,
  *   background?: Vec3,   // per-trace, keyed by the RAY ORIGIN's region
  *                        // (like maxDist): the region's miss/step-
- *                        // exhaustion color. Lets an outdoor region
- *                        // read horizon haze where an indoor region
- *                        // wants silhouette black.
+ *                        // exhaustion color. Lets one region's misses
+ *                        // read as distance haze while another keeps
+ *                        // silhouette black.
  *   maxDist?:    number,
  * }} LightingPartial   per-region override; only set the fields you change
  */
@@ -71,7 +71,10 @@ import { sdfGrad } from './scene.js';
  * }} Lighting
  */
 
-const MAX_STEPS    = 60;
+// Only rays that use the WHOLE budget pay for headroom here, and those
+// are exactly the grazing rays that need it — raising this is cheap
+// insurance against silhouette-edge exhaustion, not a per-ray tax.
+const MAX_STEPS    = 66;
 const HIT_EPSILON  = 0.001;
 const MAX_DIST     = 1000;      // default safety cap; per-call override via lighting.maxDist
 const NORMAL_EPS   = 0.0015;
@@ -82,13 +85,13 @@ const ALPHA_STOP   = 0.02;      // bail when remaining alpha drops below this
 /** Distance-proportional widening applied to BOTH the hit threshold and
  *  the translucent exit threshold: a surface counts as hit within
  *  (HIT_EPSILON + t·EPS_SLOPE) of the ray. Rationale: a screen pixel's
- *  world footprint grows ~0.05·t at this lens/grid, so accepting a hit
- *  0.0035·t early is sub-pixel at every distance — invisible — while
- *  it rescues the pathological grazing case: a ray skimming a large
- *  flat surface (the cove's water plane, the plateau) closes only
- *  sin(grazing angle) of its gap per sphere-trace step, and below ~8°
- *  used to exhaust MAX_STEPS and paint background black across the
- *  whole far-water band. Fewer steps per ray also means faster frames.
+ *  world footprint grows with distance (~0.05·t at a 64-cell grid over
+ *  a hemispheric lens), so accepting a hit 0.005·t early is sub-pixel
+ *  at every distance — invisible — while it rescues the pathological
+ *  grazing case: a ray skimming a large flat surface closes only
+ *  sin(grazing angle) of its gap per sphere-trace step, and at shallow
+ *  angles exhausts MAX_STEPS short of the surface, painting background
+ *  through geometry. Fewer steps per ray also means faster frames.
  *
  *  The exit threshold widens by the same amount so a translucent item
  *  hit early stays "inside" (skipped) until the ray is genuinely past
@@ -100,14 +103,16 @@ const EPS_SLOPE    = 0.005;
 /** Forced-hit window on step exhaustion, as a multiple of the relaxed
  *  hit threshold. A ray that spends its whole step budget CREEPING
  *  toward a surface it never quite reaches (tangent rays along
- *  conservatively-scaled SDFs — mountain flanks, grazing ground) used
- *  to fall through to the background mix, punching a background-
- *  colored halo through the silhouette onto whatever lay behind. If
- *  the ray dies within this window of its nearest surface, shade that
- *  surface instead. The positional error is a few relaxed epsilons —
- *  sub-pixel at the distances where exhaustion happens — while the
- *  halo it replaces was a full-pixel artifact. */
-const FORCED_HIT   = 4;
+ *  conservatively-scaled SDFs — heightfields, grazing planes) used to
+ *  fall through to the background mix, punching a background-colored
+ *  halo through the silhouette onto whatever lay behind. If the ray
+ *  dies within this window of its nearest surface, shade that surface
+ *  instead. The positional error is a few relaxed epsilons — sub-pixel
+ *  at the distances where exhaustion happens — while the halo it
+ *  replaces was a full-pixel artifact. 6 also catches rays that skim
+ *  a flat surface nearly parallel for hundreds of units; at 6×0.005·t
+ *  the window is still ~60% of a pixel's footprint. */
+const FORCED_HIT   = 6;
 
 /** @type {Lighting} sun straight up, dim ambient, black miss-color. */
 const DEFAULT_LIGHTING = {
@@ -175,8 +180,9 @@ const _candidates = [];
  *  trace() packs them once into a flat Float32Array (plus a kind tag
  *  and an item ref), and the per-ray loop reads contiguous floats with
  *  zero pointer-chasing into item objects until an item actually
- *  passes. Invisible items are dropped at pack time, so parked pool
- *  items (bubbles, etc.) cost nothing per ray. Layout per item:
+ *  passes. Invisible items are dropped at pack time, so items a scene
+ *  parks between uses (object pools, hidden states) cost nothing per
+ *  ray. Layout per item:
  *    kind 1 (box):    [dxMin, dxMax, dyMin, dyMax, dzMin, dzMax]
  *    kind 2 (sphere): [cx, cy, cz, r², r, —]
  *    kind 0 (none):   always-candidate (unbounded items)
