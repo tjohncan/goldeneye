@@ -41,10 +41,10 @@ import {
 
 // Circuit: radius 430 around the world origin — crossing over water,
 // beach, village, and mesa alike ("around a cross-section of the
-// bowl") — at y ≈ 175: above the mesa, below the snow line, framed
+// bowl") — at y ≈ 185: above the mesa, below the snow line, framed
 // against the big mountains' rocky midriffs. One lap every 4 minutes.
 const ZEP_R      = 430;
-const ZEP_BASE_Y = 175;
+const ZEP_BASE_Y = 185;
 const ZEP_OMEGA  = 2 * Math.PI / 240;
 
 const ZEP = { cy: 1, sy: 0 };                 // yaw-only pose
@@ -56,16 +56,18 @@ const zepFrame = (sdf) => (px, py, pz) => sdf(
 );
 
 // Envelope — fat goldfish teardrop + splayed tail fan + dorsal fin.
-// Nose toward local +Z. ~50 long, ~28 tall with fins.
+// Nose toward local +Z. ~71 long, ~40 tall with fins — airship-sized
+// against the shack, as a zeppelin should be (the first draft was
+// shack-sized and read as a parade balloon).
 const zepEnvelopeShape = unionSDF(
-  smoothUnionSDF(3.0,
-    translateSDF([0, 0, +2],    sphereSDF(14.0)),
-    translateSDF([0, 0.5, +11], sphereSDF(11.5)),
-    translateSDF([0, -0.5, -9], sphereSDF(9.5)),
+  smoothUnionSDF(4.2,
+    translateSDF([0, 0, +2.8],    sphereSDF(19.6)),
+    translateSDF([0, 0.7, +15.4], sphereSDF(16.1)),
+    translateSDF([0, -0.7, -12.6], sphereSDF(13.3)),
   ),
-  translateSDF([0, 0, -23], rotateYSDF(+0.45, boxSDF([0.6, 7.5, 5.0]))),  // tail fan
-  translateSDF([0, 0, -23], rotateYSDF(-0.45, boxSDF([0.6, 7.5, 5.0]))),
-  translateSDF([0, 13, +1], rotateXSDF(-0.3, boxSDF([0.6, 5.0, 4.5]))),   // dorsal fin
+  translateSDF([0, 0, -32.2], rotateYSDF(+0.45, boxSDF([0.85, 10.5, 7.0]))),  // tail fan
+  translateSDF([0, 0, -32.2], rotateYSDF(-0.45, boxSDF([0.85, 10.5, 7.0]))),
+  translateSDF([0, 18.2, +1.4], rotateXSDF(-0.3, boxSDF([0.85, 7.0, 6.3]))),  // dorsal fin
 );
 
 const zepEnvelopeColorFn = (lpx, lpy, lpz) => {
@@ -73,15 +75,15 @@ const zepEnvelopeColorFn = (lpx, lpy, lpz) => {
   const bz = lpx * ZEP.sy + lpz * ZEP.cy;
   const ax = Math.abs(bx);
   // Cartoon goldfish eyes — black disc with a white glint, both sides.
-  const edx = ax - 8.0, edy = lpy - 2.5, edz = bz - 18.5;
-  if (edx * edx + edy * edy + edz * edz < 4.8) {
-    const gdx = ax - 7.6, gdy = lpy - 3.2, gdz = bz - 19.3;
-    if (gdx * gdx + gdy * gdy + gdz * gdz < 0.6) return [250, 250, 250];
+  const edx = ax - 11.2, edy = lpy - 3.5, edz = bz - 25.9;
+  if (edx * edx + edy * edy + edz * edz < 9.4) {
+    const gdx = ax - 10.6, gdy = lpy - 4.5, gdz = bz - 27.0;
+    if (gdx * gdx + gdy * gdy + gdz * gdz < 1.2) return [250, 250, 250];
     return [24, 22, 26];
   }
   // Fins + tail — pale flame gradient with streaks.
-  if (bz < -17.5 || lpy > 12.0) {
-    const streak = Math.sin((lpy + bx) * 0.8 + bz * 0.5);
+  if (bz < -24.5 || lpy > 16.8) {
+    const streak = Math.sin((lpy + bx) * 0.57 + bz * 0.36);
     return streak > 0.3 ? [340, 262, 128] : [326, 216, 78];
   }
   // Body — deep-orange back, golden belly, subtle scale shimmer.
@@ -89,46 +91,46 @@ const zepEnvelopeColorFn = (lpx, lpy, lpz) => {
   // the side (ambient-shaded) against bright sky; at native tint it
   // silhouettes to brown. The sunlit top clamps a little — a fair
   // trade for the flanks reading goldfish-orange in flight.
-  const shimmer = Math.sin(bz * 0.55 + ax * 0.5) * Math.sin(lpy * 0.6);
+  const shimmer = Math.sin(bz * 0.39 + ax * 0.36) * Math.sin(lpy * 0.43);
   const lift = shimmer > 0.55 ? 23 : 0;
-  if (lpy >  4) return [336 + lift, 133 + lift, 41];
-  if (lpy < -6) return [370, 290 + lift, 160];
+  if (lpy >  5.6) return [336 + lift, 133 + lift, 41];
+  if (lpy < -8.4) return [370, 290 + lift, 160];
   return [360, 215 + lift, 75];
 };
 
 // Basket + rigging — wicker gondola on four rope capsules reaching up
 // into the envelope's belly. Own Item, positioned below the envelope,
 // so its AABB hugs the gondola instead of inflating the balloon's.
-const ZEP_BASKET_DY = -17.5;                  // item origin below envelope center
+const ZEP_BASKET_DY = -24.5;                  // item origin below envelope center
 const zepBasketShape = (() => {
-  const parts = [translateSDF([0, -4.5, 0], boxSDF([2.6, 2.0, 2.6]))];
+  const parts = [translateSDF([0, -6.3, 0], boxSDF([3.6, 2.8, 3.6]))];
   for (const sx of [-1, +1]) {
     for (const sz of [-1, +1]) {
       parts.push(capsuleBetweenSDF(
-        [sx * 2.3, -2.6, sz * 2.3],
-        [sx * 5.0,  6.5, sz * 5.0],
-        0.12,
+        [sx * 3.2, -3.6, sz * 3.2],
+        [sx * 7.0,  9.1, sz * 7.0],
+        0.17,
       ));
     }
   }
   return unionSDF(...parts);
 })();
 const zepBasketColorFn = (lpx, lpy, lpz) => {
-  if (lpy > -2.4) return [190, 168, 128];                   // ropes
+  if (lpy > -3.4) return [190, 168, 128];                   // ropes
   const bx = lpx * ZEP.cy - lpz * ZEP.sy;
-  const weave = (Math.floor(bx * 2.2) + Math.floor(lpy * 2.2)) & 1;
+  const weave = (Math.floor(bx * 1.6) + Math.floor(lpy * 1.6)) & 1;
   return weave === 0 ? [172, 132, 82] : [148, 110, 64];
 };
 
 // ─────────────────────────── sky-goldfish ───────────────────────────
 
-const FISH_COUNT = 6;
+const FISH_COUNT = 13;
 
 // Cruise-band + steering constants. The band floor clears the tallest
-// static obstacle (mesa tree top ≈ 56), so cruise legs never intersect
+// static obstacle (mesa tree top ≈ 71), so cruise legs never intersect
 // geometry; only STAGE/FINAL descend below it, along per-perch
 // corridors chosen to be open air.
-const CRUISE_Y_MIN = 58, CRUISE_Y_MAX = 95;
+const CRUISE_Y_MIN = 74, CRUISE_Y_MAX = 115;
 const CRUISE_R_MIN = 60, CRUISE_R_MAX = 320;
 const CRUISE_SPEED = 16;
 const FINAL_SPEED  = 3.5;
@@ -174,10 +176,10 @@ export const addToScene = (add, { perches }) => {
     colorFn:  zepEnvelopeColorFn,
     position: [0, ZEP_BASE_Y, ZEP_R],
     sdf:      zepFrame(zepEnvelopeShape),
-    // Worst-case yaw: nose +22.5 / splayed tail -27.8 → 28.5 X/Z. The
-    // raked dorsal's rotated box reaches 13 + 5·cos(0.3) + 4.5·sin(0.3)
-    // ≈ 19.1 up → 19.6 Y.
-    boundingBox: [28.5, 19.6, 28.5],
+    // Worst-case yaw: nose +31.5 / splayed tail -39.4 → 40 X/Z. The
+    // raked dorsal's rotated box reaches 18.2 + 7·cos(0.3) + 6.3·sin(0.3)
+    // ≈ 26.7 up → 27 Y.
+    boundingBox: [40, 27, 40],
   });
   const basket = add({
     name:     'zeppelin-basket',
@@ -185,8 +187,8 @@ export const addToScene = (add, { perches }) => {
     colorFn:  zepBasketColorFn,
     position: [0, ZEP_BASE_Y + ZEP_BASKET_DY, ZEP_R],
     sdf:      zepFrame(zepBasketShape),
-    // Rope tops at (±5, ·, ±5) swing to radius √50 ≈ 7.07 at a 45° yaw.
-    boundingBox: [7.3, 7.3, 7.3],
+    // Rope tops at (±7, ·, ±7) swing to radius √98 ≈ 9.9 at a 45° yaw.
+    boundingBox: [10.2, 9.4, 10.2],
   });
 
   // ── flock state ──

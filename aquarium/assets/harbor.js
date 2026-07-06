@@ -5,11 +5,14 @@
 // The sloop is the cove-scale "real" counterpart of two indoor props:
 // the toy pirate ship sunk in the fishbowl, and the kid's crayon
 // sailboat drawing on the fridge (same red hull + white sail — the
-// drawing come true). Two Items (hull + rig) share one mutable pose;
-// their SDFs read the pose's cos/sin fields through closures, so
-// per-frame animation is position mutation + four trig writes — no
-// closure rebuilds, no allocation (bubblePump's recycling idea applied
-// to orientation).
+// drawing come true). Sized against the shack and the scaled-up dock:
+// ~28 from stern to bow tip, masthead ~21 over the waterline — a real
+// working boat, not a bathtub toy.
+//
+// Two Items (hull + rig) share one mutable pose; their SDFs read the
+// pose's cos/sin fields through closures, so per-frame animation is
+// position mutation + four trig writes — no closure rebuilds, no
+// allocation (bubblePump's recycling idea applied to orientation).
 //
 // Wander behavior: heading eases toward a slowly-drifting sine blend,
 // with a home-pull that fades in past the cruise range so the boat
@@ -54,51 +57,51 @@ const boatFrame = (sdf) => (px, py, pz) => {
 // ─────────────────────────── sloop geometry ───────────────────────────
 // Local frame: bow toward +Z, deck up, y = 0 near the waterline.
 
-const hullShape = smoothUnionSDF(0.35,
-  translateSDF([0, 0.00, -0.4], boxSDF([2.30, 1.15, 5.0])),
-  translateSDF([0, 0.10, +5.3], boxSDF([1.55, 1.00, 1.5])),
-  translateSDF([0, 0.20, +6.5], boxSDF([0.80, 0.85, 1.0])),
-  translateSDF([0, 0.10, -5.9], boxSDF([1.90, 1.00, 1.1])),
-  translateSDF([0, 1.90, -2.2], boxSDF([1.50, 0.90, 1.9])),   // cabin
+const hullShape = smoothUnionSDF(0.65,
+  translateSDF([0, 0.00, -0.7], boxSDF([4.30, 2.10, 9.3])),
+  translateSDF([0, 0.20, +9.8], boxSDF([2.90, 1.85, 2.8])),
+  translateSDF([0, 0.35, +12.0], boxSDF([1.50, 1.55, 1.85])),
+  translateSDF([0, 0.20, -10.9], boxSDF([3.50, 1.85, 2.0])),
+  translateSDF([0, 3.50, -4.1], boxSDF([2.80, 1.70, 3.5])),   // cabin
 );
 
 // Rig, in the same hull-local coords: mast, boom, mainsail (thin box
 // intersected with the leech plane → triangle), masthead pennant. The
 // rig registers as its own Item positioned RIG_DY above the hull so
 // its AABB hugs the sail instead of spanning keel-to-masthead.
-const RIG_DY = 6;
+const RIG_DY = 11;
 const sailLeechPlane = (() => {
-  // Leech runs masthead (y 11.05, z +0.45) → boom end (y 2.35, z -4.15).
-  const inv = 1 / Math.hypot(8.7, 4.6);
-  return planeSDF([0, 4.6 * inv, -8.7 * inv], (4.6 * 11.05 - 8.7 * 0.45) * inv);
+  // Leech runs masthead (y 20.3, z +0.9) → boom end (y 4.3, z -7.7).
+  const inv = 1 / Math.hypot(16.0, 8.6);
+  return planeSDF([0, 8.6 * inv, -16.0 * inv], (8.6 * 20.3 - 16.0 * 0.9) * inv);
 })();
 const rigShape = unionSDF(
-  translateSDF([0, 6.10, +0.60], cylinderSDF(5.2, 0.16)),                    // mast
-  translateSDF([0, 2.10, -2.00], rotateXSDF(Math.PI / 2, cylinderSDF(2.6, 0.10))), // boom
+  translateSDF([0, 11.30, +1.10], cylinderSDF(9.6, 0.30)),                    // mast
+  translateSDF([0, 3.90, -3.70], rotateXSDF(Math.PI / 2, cylinderSDF(4.8, 0.19))), // boom
   intersectionSDF(
-    translateSDF([0, 6.70, -1.85], boxSDF([0.055, 4.35, 2.30])),
+    translateSDF([0, 12.30, -3.40], boxSDF([0.10, 8.0, 4.3])),
     sailLeechPlane,
   ),
-  translateSDF([0, 11.50, -0.10], boxSDF([0.03, 0.25, 0.50])),               // pennant
+  translateSDF([0, 21.30, -0.20], boxSDF([0.06, 0.46, 0.93])),               // pennant
 );
 
 const hullColorFn = (lpx, lpy, lpz) => {
   const bx = lpx * S.cy - lpz * S.sy;                        // boat-local (yaw only;
   const bz = lpx * S.sy + lpz * S.cy;                        // roll is visually nil here)
-  if (lpy > 1.12) {
+  if (lpy > 2.05) {
     // Cabin — warm wood with a lit portlight band along each side.
-    if (lpy > 1.55 && lpy < 2.45 && Math.abs(bz + 2.2) < 1.55 && Math.abs(bx) > 1.05) {
+    if (lpy > 2.9 && lpy < 4.5 && Math.abs(bz + 4.1) < 2.9 && Math.abs(bx) > 1.95) {
       return [340, 310, 205];
     }
     return [150, 118, 78];
   }
-  if (lpy > 0.82) {                                          // deck planks
-    const p = Math.floor(bx / 0.5) & 1;
+  if (lpy > 1.50) {                                          // deck planks
+    const p = Math.floor(bx / 0.9) & 1;
     return p === 0 ? [168, 132, 86] : [148, 114, 74];
   }
-  if (Math.abs(lpy + 0.62) < 0.11) return [236, 231, 219];   // waterline stripe
-  if (lpy < -0.62) return [66, 42, 38];                      // hull bottom
-  const stripe = Math.floor(lpy / 0.40) & 1;                 // red topside planks
+  if (Math.abs(lpy + 1.15) < 0.20) return [236, 231, 219];   // waterline stripe
+  if (lpy < -1.15) return [66, 42, 38];                      // hull bottom
+  const stripe = Math.floor(lpy / 0.74) & 1;                 // red topside planks
   return stripe === 0 ? [182, 56, 46] : [156, 45, 38];
 };
 
@@ -108,32 +111,32 @@ const hullColorFn = (lpx, lpy, lpz) => {
 // water. ~1.75× keeps it canvas-white at ambient without clamping.
 const rigColorFn = (lpx, lpy, lpz) => {
   const bz = lpx * S.sy + lpz * S.cy;
-  if (lpy > 5.15) return [350, 98, 82];                      // pennant
-  if (bz > 0.47 || lpy < -3.55) return [122, 92, 60];        // mast / boom wood
-  const seam = Math.floor(lpy / 1.1) & 1;                    // sail cloth seams
+  if (lpy > 9.6) return [350, 98, 82];                       // pennant
+  if (bz > 0.9 || lpy < -6.6) return [122, 92, 60];          // mast / boom wood
+  const seam = Math.floor(lpy / 2.0) & 1;                    // sail cloth seams
   return seam === 0 ? [424, 420, 408] : [399, 395, 381];
 };
 
 // ─────────────────────────── buoy ───────────────────────────
 
 // Static shape (baked lean), animated only in bob — a buoy doesn't
-// need a heading. Red/white bands via colorFn.
+// need a heading. Red/white bands via colorFn, over-bright for the
+// same vertical-surface reason as the sail.
 const buoyShape = rotateZSDF(0.08, unionSDF(
-  cylinderSDF(1.3, 1.05),
-  translateSDF([0, 1.9, 0], sphereSDF(0.55)),
-  translateSDF([0, 2.6, 0], cylinderSDF(0.5, 0.07)),
+  cylinderSDF(2.5, 2.0),
+  translateSDF([0, 3.6, 0], sphereSDF(1.05)),
+  translateSDF([0, 4.95, 0], cylinderSDF(0.95, 0.13)),
 ));
-// Over-bright bands for the same vertical-surface reason as the sail.
 const buoyColorFn = (lpx, lpy, lpz) => {
-  if (lpy > 2.15) return [50, 48, 50];                       // antenna
-  if (lpy > 1.35) return [326, 93, 77];                      // top ball
-  const band = Math.floor((lpy + 1.3) / 0.65) & 1;
+  if (lpy > 4.1) return [50, 48, 50];                        // antenna
+  if (lpy > 2.6) return [326, 93, 77];                       // top ball
+  const band = Math.floor((lpy + 2.5) / 1.25) & 1;
   return band === 0 ? [326, 93, 77] : [381, 374, 362];
 };
 
 // ─────────────────────────── behavior ───────────────────────────
 
-const CRUISE_SPEED   = 4.5;      // world units / sec
+const CRUISE_SPEED   = 6;        // world units / sec
 const TURN_RATE      = 0.22;     // max rad / sec
 const HOME           = { x: 40, z: 330 };
 const CRUISE_RANGE   = 190;      // heading stays free within this radius of HOME
@@ -150,34 +153,35 @@ export const addToScene = (add, { seaLevelY }) => {
     name:     'cove-sloop-hull',
     color:    [182, 56, 46],
     colorFn:  hullColorFn,
-    position: [S.x, seaLevelY + 0.25, S.z],
+    position: [S.x, seaLevelY + 0.5, S.z],
     sdf:      boatFrame(hullShape),
-    // Worst-case yaw: hull reaches z +7.5 / x ±2.35 → 7.7 on both axes.
-    boundingBox: [7.7, 3.0, 7.7],
+    // Worst-case yaw: hull reaches z +13.9 / x ±4.3 → 14.2 both axes;
+    // cabin top 5.2 plus roll sway.
+    boundingBox: [14.2, 5.7, 14.2],
   });
   const framedRig = boatFrame(rigShape);
   const rig = add({
     name:     'cove-sloop-rig',
     color:    [242, 240, 233],
     colorFn:  rigColorFn,
-    position: [S.x, seaLevelY + 0.25 + RIG_DY, S.z],
+    position: [S.x, seaLevelY + 0.5 + RIG_DY, S.z],
     // Rig primitives live in hull-local coords; shift the query down by
     // RIG_DY so this item's own origin can sit at the sail's center for
     // a tight AABB.
     sdf:      (px, py, pz) => framedRig(px, py + RIG_DY, pz),
-    // Pennant top reaches hull-local 11.75 → +5.75 here; boom tail
-    // -4.7 horizontal at worst yaw.
-    boundingBox: [5.6, 6.0, 5.6],
+    // Pennant top reaches hull-local 21.8 → +10.8 here; boom tail
+    // -8.7 horizontal at worst yaw.
+    boundingBox: [8.8, 11.0, 8.8],
   });
 
-  const BUOY_X = 34, BUOY_Z = 158;
+  const BUOY_X = 40, BUOY_Z = 185;
   const buoy = add({
     name:     'cove-buoy',
-    color:    [204, 58, 48],
+    color:    [326, 93, 77],
     colorFn:  buoyColorFn,
-    position: [BUOY_X, seaLevelY + 0.2, BUOY_Z],
+    position: [BUOY_X, seaLevelY + 0.3, BUOY_Z],
+    boundingBox: [2.9, 6.3, 2.9],
     sdf:      buoyShape,
-    boundingBox: [1.5, 3.3, 1.5],
   });
 
   let lastTimeMs = performance.now();
@@ -216,12 +220,12 @@ export const addToScene = (add, { seaLevelY }) => {
       // Advance along the bow; layered-sine bob + roll.
       S.x += S.sy * CRUISE_SPEED * dt;
       S.z += S.cy * CRUISE_SPEED * dt;
-      const bob  = 0.30 * Math.sin(t * 0.9) + 0.18 * Math.sin(t * 0.53 + 1.3);
+      const bob  = 0.45 * Math.sin(t * 0.9) + 0.28 * Math.sin(t * 0.53 + 1.3);
       const roll = 0.045 * Math.sin(t * 0.8) + 0.030 * Math.sin(t * 1.7 + 0.6);
       S.cr = Math.cos(roll);
       S.sr = Math.sin(roll);
 
-      const y = seaLevelY + 0.25 + bob;
+      const y = seaLevelY + 0.5 + bob;
       hull.position[0] = S.x;
       hull.position[1] = y;
       hull.position[2] = S.z;
@@ -229,7 +233,7 @@ export const addToScene = (add, { seaLevelY }) => {
       rig.position[1]  = y + RIG_DY;
       rig.position[2]  = S.z;
 
-      buoy.position[1] = seaLevelY + 0.2 + 0.25 * Math.sin(t * 1.1 + 2.0);
+      buoy.position[1] = seaLevelY + 0.3 + 0.4 * Math.sin(t * 1.1 + 2.0);
     },
   };
 };
