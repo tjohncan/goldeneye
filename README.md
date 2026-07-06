@@ -23,6 +23,8 @@ node serve.js
 # ( note: any other static file server works too;
 # ... it's just a single-page HTML doc linking JS )
 # then: open http://localhost:8080/ in your favorite browser.
+# optional quality levers: ?res=96 (render grid, default 64; cost ~res²)
+# and ?fps=20 (frame cap, default 13) — e.g. localhost:8080/?res=96&fps=20
 ```
 
 ## Layout

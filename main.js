@@ -8,10 +8,20 @@ import { bindControls }          from './aquarium/controls.js';
 import { bindPhysics }           from './aquarium/physics.js';
 import { throttle }              from './aquarium/fpsThrottle.js';
 
-const SCREEN_W    = 64;
-const SCREEN_H    = 64;
-const LENS_POINTS = 6400;
-const MAX_FPS     = 13;
+// Quality levers via query string, defaults matching the classic look:
+//   ?res=96   — render-grid resolution (32..160, default 64). Cost
+//               scales ~res² twice over: rays traced AND DOM cells
+//               painted. 96 is a comfortable step up on a mid machine;
+//               128 is for beefy ones.
+//   ?fps=20   — frame cap (4..30, default 13).
+// Lens point count scales with the grid so sampling density per cell
+// (and therefore the fisheye character) is identical at every res.
+const params      = new URLSearchParams(location.search);
+const RES         = Math.min(160, Math.max(32, Number(params.get('res')) || 64));
+const SCREEN_W    = RES;
+const SCREEN_H    = RES;
+const LENS_POINTS = Math.round(6400 * (RES / 64) * (RES / 64));
+const MAX_FPS     = Math.min(30, Math.max(4, Number(params.get('fps')) || 13));
 
 const lens = disk({ points: LENS_POINTS });
 const camera = new Camera({ lens, screenW: SCREEN_W, screenH: SCREEN_H });
