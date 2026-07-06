@@ -15,11 +15,12 @@
 // keyhole + brass plates + brass knobs + region veils — plus the LIVING
 // COVE layered on through the asset modules: mountains + mesa
 // (mountains.js), fishing village / lighthouse / trees / dock
-// (village.js), the wandering sloop + buoy (harbor.js), orca + shark
-// underwater (seaLife.js), and the goldfish zeppelin + perching
-// sky-goldfish flock (skyLife.js). Animated assets hand back per-frame
-// update callbacks, which addToScene returns for world.js to thread
-// into the main tick.
+// (village.js), the wandering sloop + buoy (harbor.js), orca + shark +
+// octopus underwater (seaLife.js), the goldfish zeppelin + perching
+// sky-goldfish flock (skyLife.js), and the mountain-to-mountain
+// railway (train.js — track and tunnel mouths painted, not modeled).
+// Animated assets hand back per-frame update callbacks, which
+// addToScene returns for world.js to thread into the main tick.
 
 import {
   registerItem,
@@ -50,6 +51,7 @@ import * as village        from '../../assets/village.js';
 import * as harbor         from '../../assets/harbor.js';
 import * as seaLife        from '../../assets/seaLife.js';
 import * as skyLife        from '../../assets/skyLife.js';
+import * as train          from '../../assets/train.js';
 import { frameTimeSec }    from '../../../core/tracer.js';
 import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
@@ -678,7 +680,16 @@ const firmamentColorFn = (lpx, lpy, lpz) => {
 // rock past that. The mid-and-darker bands now read as the cove's
 // underwater seafloor and beach, since the +Z hemisphere groundHeight
 // slopes through them.
+//
+// Plateau-level hits first consult the railway ribbon (train.js's
+// paintTrack) — rails, sleepers, and ballast painted straight onto the
+// ground, zero extra Items. The height guard keeps every non-plateau
+// ground hit (beach, seafloor) to a single comparison.
 const groundColorFn = (lpx, lpy, lpz) => {
+  if (lpy > SHACK_PLATEAU_Y - 1.5) {
+    const track = train.paintTrack(lpx, lpz);
+    if (track !== null) return track;
+  }
   if (lpy < SHACK_PLATEAU_Y - 25) return [180, 165, 130];
   if (lpy < SHACK_PLATEAU_Y - 10) return [200, 185, 150];
   if (lpy < SHACK_PLATEAU_Y)      return [225, 205, 145];
@@ -1059,12 +1070,16 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   });
 
   // ── the living cove ──
-  // Mountain range + mesa first (returns the mesa's surface geometry),
+  // Mountain range + mesa first (returns the mesa's surface geometry;
+  // takes the railway's tunnel-mouth points to paint on the flanks),
   // then the static village (returns the flock's perch list), then the
   // animated assets. All registered through the same outside-tagged
   // `add`, so everything participates in the cove's region cull and
   // costs the kitchen-side regions nothing.
-  const { mesa } = mountains.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
+  const { mesa } = mountains.addToScene(add, {
+    plateauY: SHACK_PLATEAU_Y,
+    tunnels:  train.TUNNEL_PORTALS,
+  });
 
   const { perches } = village.addToScene(add, {
     plateauY:  SHACK_PLATEAU_Y,
@@ -1087,6 +1102,9 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   const harborLife = harbor.addToScene(add, { seaLevelY: SEA_LEVEL_Y });
   const swimmers   = seaLife.addToScene(add);
   const flyers     = skyLife.addToScene(add, { perches });
+  const railway    = train.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
 
-  return { updates: [harborLife.update, swimmers.update, flyers.update] };
+  return {
+    updates: [harborLife.update, swimmers.update, flyers.update, railway.update],
+  };
 };

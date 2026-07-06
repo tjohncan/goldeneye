@@ -137,9 +137,25 @@ const makeMountainSdf = ({ peaks, noiseSeed, peakH, sdfScale }) => {
 
 // ─────────────────────────── colorFns ───────────────────────────
 
-const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH }) => {
+// `tunnels` — optional list of mountain-LOCAL [x, y, z] points where a
+// railway bores in. Painted as a dark mouth with a stone ring; the
+// track's items simply drive into the mountain's material behind it
+// (no carve — the surface occludes them), so the mouth is the whole
+// illusion.
+const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH, tunnels }) => {
   const yOff = peakH / 2;
   return (lpx, lpy, lpz) => {
+    if (tunnels !== undefined) {
+      for (let i = 0; i < tunnels.length; i++) {
+        const tn = tunnels[i];
+        const dx = lpx - tn[0];
+        const dy = (lpy - tn[1]) * 1.15;       // slightly squashed arch
+        const dz = lpz - tn[2];
+        const d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < 72) return [26, 24, 28];      // the dark bore
+        if (d2 < 116) return [96, 86, 78];     // dressed-stone ring
+      }
+    }
     const worldY = lpy + base_y + yOff;
     if (hasSnow && worldY > SNOW_LINE_Y) {
       const drift = Math.sin(lpx * 0.40 + noiseSeed) * Math.cos(lpz * 0.50 + noiseSeed * 1.4);
@@ -192,13 +208,15 @@ const MESA_SEED   = 9.1;
  * hovering at a guessed elevation.
  *
  * @param {(item: import('../../core/scene.js').Item) => void} add
- * @param {{ plateauY: number }} opts   `plateauY` is the cove's shack-
- *        plateau elevation (owned by outside.js); each mountain's base
- *        anchors here.
+ * @param {{ plateauY: number, tunnels?: number[][] }} opts
+ *        `plateauY` is the cove's shack-plateau elevation (owned by
+ *        outside.js); each mountain's base anchors here. `tunnels` are
+ *        WORLD points of railway bores — each is painted onto
+ *        whichever mountain's footprint contains it.
  * @returns {{ mesa: { x: number, z: number, topR: number,
  *                     surfaceY: (px: number, pz: number) => number } }}
  */
-export const addToScene = (add, { plateauY }) => {
+export const addToScene = (add, { plateauY, tunnels = [] }) => {
   // Range mountain — wraps shape + dome height into a layout record.
   const range = (angle, hd, baseR, base_y, hasSnow, seed, shapeFn) => {
     const peakH = peakHeightOnDome(hd, base_y);
@@ -236,6 +254,16 @@ export const addToScene = (add, { plateauY }) => {
     const cx     = m.hd * Math.cos(angRad);
     const cz     = m.hd * Math.sin(angRad);
     const cy     = m.base_y + m.peakH / 2;
+    // Claim any tunnel bore landing inside this mountain's footprint,
+    // converted to this item's local frame for the colorFn.
+    const myTunnels = [];
+    for (const tw of tunnels) {
+      const dx = tw[0] - cx, dz = tw[2] - cz;
+      if (dx * dx + dz * dz < m.baseR * m.baseR) {
+        myTunnels.push([dx, tw[1] - cy, dz]);
+      }
+    }
+    if (myTunnels.length > 0) m.tunnels = myTunnels;
     add({
       name:     `outside-mountain-${m.angle}`,
       color:    [110, 95, 75],
