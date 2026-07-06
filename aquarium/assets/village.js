@@ -57,6 +57,39 @@ const perchFacingHome = (x, y, z, ax, ay, az) =>
   ({ x, y, z, yaw: Math.atan2(-x, -z), ax, ay, az });
 
 
+// ─────────────────────────── the lane ───────────────────────────
+
+// The village's organizing spine: a dirt lane running from the mesa's
+// east skirt down through the settlement, painted into the ground
+// exactly like the railway (zero Items, hit-time cost only, behind a
+// cheap bounds reject). Buildings sit alternately left and right of
+// it, facades turned toward it. One straight segment reads fine at
+// this length; the fisheye supplies the curve.
+const LANE_AX = 75,   LANE_AZ = -245;
+const LANE_BX = -125, LANE_BZ = -475;
+const LANE_DX = LANE_BX - LANE_AX;
+const LANE_DZ = LANE_BZ - LANE_AZ;
+const LANE_LEN2 = LANE_DX * LANE_DX + LANE_DZ * LANE_DZ;
+
+/**
+ * Paint sample for the lane at a ground point; [r, g, b] on the lane,
+ * null elsewhere. Same contract as train.js's paintTrack.
+ * @param {number} lpx @param {number} lpz
+ * @returns {number[] | null}
+ */
+export const paintLane = (lpx, lpz) => {
+  if (lpx < LANE_BX - 12 || lpx > LANE_AX + 12 ||
+      lpz < LANE_BZ - 12 || lpz > LANE_AZ + 12) return null;
+  let t = ((lpx - LANE_AX) * LANE_DX + (lpz - LANE_AZ) * LANE_DZ) / LANE_LEN2;
+  if (t < 0) t = 0; else if (t > 1) t = 1;
+  const d = Math.hypot(lpx - (LANE_AX + LANE_DX * t), lpz - (LANE_AZ + LANE_DZ * t));
+  if (d > 6.5) return null;
+  if (d > 5.2) return [126, 138, 92];                      // worn grass verge
+  if (Math.abs(d - 2.2) < 0.5) return [168, 148, 108];     // wheel ruts
+  return [150, 132, 96];                                   // packed dirt
+};
+
+
 // ─────────────────────────── cottages ───────────────────────────
 
 // One building = plaster body box + overhanging gable roof (triPrism).
@@ -289,27 +322,31 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
   const perches = [];
 
   // ── the village, beyond the mesa ──
-  // The lane bends between yaws; the fishmonger's shop anchors the
-  // near (mesa-side) end, the manor presides over the west row.
-  // `ridgePerches` > 1 spreads extra landing spots along big roofs.
+  // Organized along THE LANE (see paintLane below) — the composition's
+  // spine. Buildings alternate sides of it with facades turned toward
+  // it, neighbors ~100-135 apart: a settlement that grew along a road,
+  // not dice rolled from a cup. The fishmonger's shop anchors the
+  // mesa-side end where the lane arrives; the manor presides mid-lane
+  // behind a deeper setback. `ridgePerches` > 1 spreads extra landing
+  // spots along big roofs.
   const cottages = [
-    { name: 'village-manor',        x: -95, z: -335, yaw: +0.30, sc: 4.0,
-      hx: 28.0, bodyHalfH: 24.0, hz: 22.0, roofH: 22.0, stories: 2, fishSign: false, ridgePerches: 2,
-      pal: { wall: [226, 219, 202], wallLight: [240, 233, 216], wallDark: [178, 170, 152],
-             roof: [88, 94, 108], roofDark: [72, 78, 92], trim: [92, 78, 58] } },
-    { name: 'village-shop',         x: 0, z: -305, yaw: -0.15, sc: 2.8,
+    { name: 'village-shop',         x: 83, z: -300, yaw: -0.74, sc: 2.8,
       hx: 22.0, bodyHalfH: 14.0, hz: 17.0, roofH: 14.0, stories: 2, fishSign: true, ridgePerches: 2,
       pal: { wall: [242, 230, 202], wallLight: [252, 242, 218], wallDark: [188, 172, 148],
              roof: [186, 96, 64], roofDark: [158, 78, 52], trim: [96, 70, 48] } },
-    { name: 'village-cottage-tall', x: 125, z: -365, yaw: +0.50, sc: 3.2,
+    { name: 'village-cottage-tall', x: -52, z: -297, yaw: +2.42, sc: 3.2,
       hx: 17.0, bodyHalfH: 19.0, hz: 15.0, roofH: 15.0, stories: 2, fishSign: false, ridgePerches: 2,
       pal: { wall: [232, 208, 150], wallLight: [244, 222, 168], wallDark: [186, 164, 116],
              roof: [186, 96, 64], roofDark: [158, 78, 52], trim: [96, 70, 48] } },
-    { name: 'village-cottage-sage', x: -38, z: -398, yaw: -0.35, sc: 2.6,
+    { name: 'village-manor',        x: -8, z: -424, yaw: -0.95, sc: 4.0,
+      hx: 28.0, bodyHalfH: 24.0, hz: 22.0, roofH: 22.0, stories: 2, fishSign: false, ridgePerches: 2,
+      pal: { wall: [226, 219, 202], wallLight: [240, 233, 216], wallDark: [178, 170, 152],
+             roof: [88, 94, 108], roofDark: [72, 78, 92], trim: [92, 78, 58] } },
+    { name: 'village-cottage-sage', x: -115, z: -403, yaw: +2.17, sc: 2.6,
       hx: 15.0, bodyHalfH: 11.5, hz: 13.5, roofH: 11.5, stories: 1, fishSign: false, ridgePerches: 1,
       pal: { wall: [200, 210, 180], wallLight: [216, 224, 196], wallDark: [156, 166, 140],
              roof: [104, 110, 122], roofDark: [86, 92, 104], trim: [88, 76, 58] } },
-    { name: 'village-cottage-blue', x: 72, z: -438, yaw: +0.70, sc: 2.4,
+    { name: 'village-cottage-blue', x: -96, z: -500, yaw: -0.70, sc: 2.4,
       hx: 13.5, bodyHalfH: 10.0, hz: 12.0, roofH: 10.0, stories: 1, fishSign: false, ridgePerches: 1,
       pal: { wall: [176, 194, 210], wallLight: [192, 208, 222], wallDark: [138, 156, 174],
              roof: [96, 102, 114], roofDark: [80, 86, 98], trim: [80, 72, 62] } },
@@ -357,13 +394,13 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
   perches.push(perchFacingHome(LH_X, LH_POS_Y + 43.3, LH_Z, 0, 13, 0));
 
   // ── trees ──
-  // Big ones shade the village; the beach pair stays modest; one
-  // statement tree on the mesa top.
+  // Big ones line the lane between buildings; the beach pair stays
+  // modest; one statement tree on the mesa top.
   const trees = [
-    { x: -45, z: -290, sc: 3.4, seed: 1.3, baseY: plateauY, perch: true  },
-    { x: +55, z: -335, sc: 3.0, seed: 3.7, baseY: plateauY, perch: false },
-    { x: 160, z: -420, sc: 3.2, seed: 5.1, baseY: plateauY, perch: true  },
-    { x: -115, z: -390, sc: 3.6, seed: 7.9, baseY: plateauY, perch: false },
+    { x: 100, z: -270, sc: 3.4, seed: 1.3, baseY: plateauY, perch: true  },
+    { x: 0,   z: -290, sc: 3.0, seed: 3.7, baseY: plateauY, perch: false },
+    { x: -40, z: -460, sc: 3.2, seed: 5.1, baseY: plateauY, perch: true  },
+    { x: -160, z: -430, sc: 3.6, seed: 7.9, baseY: plateauY, perch: false },
     { x: +46, z: +46,  sc: 2.3, seed: 2.4, baseY: plateauY - 0.3, perch: true },
     { x: -40, z: +38,  sc: 2.0, seed: 6.2, baseY: plateauY - 0.1, perch: false },
     { x: mesa.x + 15, z: mesa.z + 9, sc: 2.6, seed: 4.4,

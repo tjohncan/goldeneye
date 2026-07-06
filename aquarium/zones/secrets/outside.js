@@ -681,14 +681,18 @@ const firmamentColorFn = (lpx, lpy, lpz) => {
 // underwater seafloor and beach, since the +Z hemisphere groundHeight
 // slopes through them.
 //
-// Plateau-level hits first consult the railway ribbon (train.js's
-// paintTrack) — rails, sleepers, and ballast painted straight onto the
-// ground, zero extra Items. The height guard keeps every non-plateau
-// ground hit (beach, seafloor) to a single comparison.
+// Plateau-level hits first consult the painted infrastructure — the
+// railway ribbon (train.js's paintTrack) and the village lane
+// (village.js's paintLane) — rails, sleepers, ballast, ruts, all
+// painted straight onto the ground, zero extra Items. The height
+// guard keeps every non-plateau ground hit (beach, seafloor) to a
+// single comparison.
 const groundColorFn = (lpx, lpy, lpz) => {
   if (lpy > SHACK_PLATEAU_Y - 1.5) {
     const track = train.paintTrack(lpx, lpz);
     if (track !== null) return track;
+    const lane = village.paintLane(lpx, lpz);
+    if (lane !== null) return lane;
   }
   if (lpy < SHACK_PLATEAU_Y - 25) return [180, 165, 130];
   if (lpy < SHACK_PLATEAU_Y - 10) return [200, 185, 150];
@@ -995,6 +999,39 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     opacity:  0.25,
     collides: false,
     boundingBox: [FOG_HALF_X, FOG_HALF_Y, FOG_HALF_Z],
+  });
+
+  // Shoreline ring — a sandy torus hugging the waterline circle with
+  // its crown just breaking the surface: reads as the wet-sand berm +
+  // foam line the beach was missing. It's ALSO load-bearing geometry:
+  // where the rising beach meets the water plane's underside they form
+  // an acute wedge, and rays grazing into that corner creep until the
+  // step budget dies (no epsilon rescues an acute corner) — from
+  // underwater that painted a pale band along the shore. The torus
+  // plugs the wedge, so those rays hit sand/foam instead. Full circle:
+  // the -Z half is buried under the plateau and never renders. The
+  // tiny AABB half-height means only water-level rays ever test it.
+  const SHORE_RING_R  = 98;                    // waterline radius (ground = -25)
+  const SHORE_TUBE_R  = 3.2;
+  const SHORE_RING_Y  = SEA_LEVEL_Y - 1.5;
+  const shoreRingSdf = (px, py, pz) => {
+    const rr = Math.hypot(px, pz) - SHORE_RING_R;
+    return Math.hypot(rr, py) - SHORE_TUBE_R;
+  };
+  const shoreRingColorFn = (lpx, lpy, lpz) => {
+    if (lpy > 2.1) return [238, 234, 222];     // foam crown, above the waterline
+    if (lpy > 0.4) return [205, 188, 148];     // wet sand at the waterline
+    return [188, 172, 136];                    // submerged toe
+  };
+  add({
+    name:     'shoreline-foam',
+    color:    [205, 188, 148],
+    colorFn:  shoreRingColorFn,
+    position: [0, SHORE_RING_Y, 0],
+    sdf:      shoreRingSdf,
+    collides: false,
+    boundingBox: [SHORE_RING_R + SHORE_TUBE_R + 0.3, SHORE_TUBE_R + 0.3,
+                  SHORE_RING_R + SHORE_TUBE_R + 0.3],
   });
 
   // House exterior — the visible building from the cove. Wraps the
