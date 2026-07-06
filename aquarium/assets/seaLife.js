@@ -1,8 +1,11 @@
-// aquarium/assets/seaLife.js — big life under the cove's water: an
-// orca that cruises a wide deep circuit and surfaces on a slow breath
+// aquarium/assets/seaLife.js — life under the cove's water: an orca
+// that cruises a wide deep circuit and surfaces on a slow breath
 // cycle (dorsal fin + back breaking the waves before sounding again),
-// and a reef shark tracing tighter, shallower laps whose raked fin
-// slices above the surface at the crest of each pass.
+// a reef shark tracing tighter, shallower laps whose raked fin slices
+// above the surface at the crest of each pass, and an octopus walking
+// a slow patrol around its seafloor den — directly beneath the
+// shark's ring, which passes within a body-length of it. Drama, free
+// of charge.
 //
 // Both swim ANALYTIC paths — position is a closed-form function of
 // time (circle with slowly-breathing radius + sinusoidal depth), so
@@ -22,6 +25,7 @@ import {
   unionSDF, smoothUnionSDF,
   translateSDF, rotateXSDF,
 } from '../../core/scene.js';
+import { frameTimeSec } from '../../core/tracer.js';
 
 /** @typedef {import('../../core/scene.js').Item} Item */
 
@@ -103,10 +107,64 @@ const sharkColorFn = (lpx, lpy, lpz) => {
   // Eye dots either side of the snout.
   const edx = Math.abs(x1) - 1.15, edy = by - 0.35, edz = bz - 4.6;
   if (edx * edx + edy * edy + edz * edz < 0.12) return [15, 15, 18];
-  if (by > 3.2) return [70, 78, 88];                                 // dusky fin tip
-  if (by > 0.4) return [104, 116, 130];                              // blue-gray back
+  // Fins share the back's gray — a distinct tip tone blended oddly
+  // with bright water/sky at this resolution (fins are ~1px wide, so
+  // any third tone reads as mismatch, not detail).
+  if (by > 0.4) return [104, 116, 130];                              // back + fins
   if (by < -0.4) return [225, 228, 230];                             // white belly
   return [160, 168, 178];                                            // flank band
+};
+
+// ─────────────────────────── octopus ───────────────────────────
+
+const OCTO = makePose(0);
+
+// Mantle pair + eight single-segment arms splayed outward-down with a
+// slight swirl (each arm's foot angle leads its root by 0.35 rad, so
+// the skirt reads mid-stride rather than star-symmetric). 10 primitives
+// — the cost ceiling that kept it out of round one — but its AABB is
+// small and seafloor-local, so rays only pay when actually looking at
+// the den.
+const octopusShape = (() => {
+  const parts = [
+    smoothUnionSDF(1.2,
+      translateSDF([0, 1.8, -1.2], sphereSDF(4.2)),        // mantle
+      translateSDF([0, 0.6, 1.8], sphereSDF(3.4)),         // head, eyes side (+Z)
+    ),
+  ];
+  for (let k = 0; k < 8; k++) {
+    const a  = (k + 0.5) * Math.PI / 4;
+    const a2 = a + 0.35;
+    parts.push(capsuleBetweenSDF(
+      [2.2 * Math.cos(a), -2.0, 2.2 * Math.sin(a)],
+      [8.5 * Math.cos(a2), -5.8, 8.5 * Math.sin(a2)],
+      0.62,
+    ));
+  }
+  return unionSDF(...parts);
+})();
+
+const octopusColorFn = (lpx, lpy, lpz) => {
+  const x1 = lpx * OCTO.cy - lpz * OCTO.sy;
+  const z1 = lpx * OCTO.sy + lpz * OCTO.cy;
+  const by = lpy * OCTO.cp - z1 * OCTO.sp;
+  const bz = lpy * OCTO.sp + z1 * OCTO.cp;
+  // Eyes — pale discs with a horizontal slit pupil, both sides of the
+  // head.
+  const edx = Math.abs(x1) - 2.1, edy = by - 2.6, edz = bz - 1.9;
+  if (edx * edx + edy * edy + edz * edz < 0.72) {
+    if (Math.abs(edy) < 0.24) return [22, 20, 22];         // slit pupil
+    return [212, 200, 176];
+  }
+  // Underside — pale sucker tone.
+  if (by < -2.4) return [206, 164, 128];
+  // Chromatophore mottle, drifting slowly — octopuses shimmer.
+  const t = frameTimeSec;
+  const mottle = Math.sin(x1 * 0.9 + t * 0.3) * Math.cos(bz * 1.1 - t * 0.23)
+               + Math.sin(by * 1.3 + 1.7) * 0.5;
+  if (mottle >  0.7) return [188, 102, 70];
+  if (mottle < -0.5) return [128, 60, 44];
+  return [168, 84, 58];
 };
 
 // ─────────────────────────── circuits ───────────────────────────
@@ -142,6 +200,16 @@ const SHARK_PATH = {
   baseY: -29.5, yAmp: 2.2, yFreq: 0.9, yPhase: 0.7,
 };
 const SHARK_PITCH_MAX = 0.20;
+
+// Octopus: a slow walk around its den on the shallow seafloor —
+// 70 s a lap, arms brushing the sand (floor there runs -57.7..-60.2;
+// arm tips reach -60.8, so the deep-side steps bury slightly — sand).
+const OCTO_PATH = {
+  cx: 110, cz: 200, baseR: 13, rAmp: 2, rFreq: 0.02, rPhase: 0,
+  angSpeed: 2 * Math.PI / 70, phi0: 1.0,
+  baseY: -54.4, yAmp: 0.5, yFreq: 0.45, yPhase: 0,
+};
+const OCTO_PITCH_MAX = 0.10;
 
 // Update one creature: move to the path point, derive yaw/pitch from
 // the position delta, write pose trig + item position.
@@ -201,11 +269,25 @@ export const addToScene = (add) => {
     boundingBox: [8.5, 6.1, 8.5],
   });
 
+  const octoStart = pathAt(OCTO_PATH, t0);
+  OCTO.x = octoStart[0]; OCTO.y = octoStart[1]; OCTO.z = octoStart[2];
+  const octopus = add({
+    name:     'cove-octopus',
+    color:    [168, 84, 58],
+    colorFn:  octopusColorFn,
+    position: [OCTO.x, OCTO.y, OCTO.z],
+    sdf:      creatureFrame(OCTO, octopusShape),
+    // Arm feet reach 8.5 + 0.62 radially; tips dip to -6.4 upright and
+    // ~-7.3 at max pitch (the 9.1 radial reach tilted by 0.10).
+    boundingBox: [9.7, 7.5, 9.7],
+  });
+
   return {
     update(timeMs) {
       const t = timeMs / 1000;
-      advance(ORCA,  orca,  ORCA_PATH,  t, ORCA_PITCH_MAX);
-      advance(SHARK, shark, SHARK_PATH, t, SHARK_PITCH_MAX);
+      advance(ORCA,  orca,    ORCA_PATH,  t, ORCA_PITCH_MAX);
+      advance(SHARK, shark,   SHARK_PATH, t, SHARK_PITCH_MAX);
+      advance(OCTO,  octopus, OCTO_PATH,  t, OCTO_PITCH_MAX);
     },
   };
 };
