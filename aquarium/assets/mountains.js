@@ -128,7 +128,16 @@ const makeMountainSdf = ({ peaks, noiseSeed, peakH, sdfScale }) => {
         Math.sin(lpx * 0.080 + noiseSeed * 1.3) * Math.cos(lpz * 0.075 + noiseSeed * 0.8) * 0.4
       ) * 4;
       const surfaceH = surfaceMax + noise;
-      return Math.max(lpyBase - surfaceH, -lpyBase) * scale;
+      // Interior distance measures to the SLOPE overhead, not the base
+      // plane: the base term used to win anywhere below mid-height, so
+      // a collider that punched through a thin skirt got a DOWNWARD
+      // gradient, was shoved onto the base, and wedged between the
+      // mountain pushing down and the ground pushing up — an
+      // inescapable trap. The -200 offset keeps the base term only for
+      // absurd depths (sign sanity far underground, unreachable by
+      // anything that moves); everywhere reachable, the gradient
+      // ejects up-and-out onto the hillside.
+      return Math.max(lpyBase - surfaceH, -lpyBase - 200) * scale;
     }
     return Math.sqrt(minRimDist * minRimDist + lpyBase * lpyBase) * scale;
   };
@@ -149,11 +158,24 @@ const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH, tunnels }) => 
       for (let i = 0; i < tunnels.length; i++) {
         const tn = tunnels[i];
         const dx = lpx - tn[0];
-        const dy = (lpy - tn[1]) * 1.15;       // slightly squashed arch
         const dz = lpz - tn[2];
-        const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < 256) return [26, 24, 28];     // the dark bore (r ≈ 16)
-        if (d2 < 324) return [96, 86, 78];     // dressed-stone ring
+        if (dx * dx + dz * dz > 1050) continue;
+        // Tunnel-arch profile, anchored at rail level and STRETCHED
+        // up-slope along the bore axis (tn[3..4], toward the mountain
+        // core): the mouth paints onto a shallow skirt seen nearly
+        // edge-on from the track, so a circular patch foreshortens to
+        // a dot — the elongated footprint climbs the hillside and
+        // reads as a bore driven into it. Across-track half-width 15,
+        // along-bore reach ~29, crown ~17 over the rails.
+        const u = dx * tn[3] + dz * tn[4];     // along the bore axis
+        const v = dz * tn[3] - dx * tn[4];     // across it
+        const ay = lpy - tn[1] + 8;            // 0 at the rail base
+        if (ay > -1.5) {
+          const dome = ay > 6 ? (ay - 6) * 1.35 : 0;
+          const p2 = v * v + u * u * 0.27 + dome * dome;
+          if (p2 < 225) return [26, 24, 28];   // the dark bore
+          if (p2 < 342) return [96, 86, 78];   // dressed-stone ring
+        }
       }
     }
     const worldY = lpy + base_y + yOff;
@@ -255,12 +277,14 @@ export const addToScene = (add, { plateauY, tunnels = [] }) => {
     const cz     = m.hd * Math.sin(angRad);
     const cy     = m.base_y + m.peakH / 2;
     // Claim any tunnel bore landing inside this mountain's footprint,
-    // converted to this item's local frame for the colorFn.
+    // converted to this item's local frame for the colorFn, plus the
+    // unit bore axis (anchor → mountain core) the arch stretches along.
     const myTunnels = [];
     for (const tw of tunnels) {
       const dx = tw[0] - cx, dz = tw[2] - cz;
-      if (dx * dx + dz * dz < m.baseR * m.baseR) {
-        myTunnels.push([dx, tw[1] - cy, dz]);
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d < m.baseR) {
+        myTunnels.push([dx, tw[1] - cy, dz, -dx / d, -dz / d]);
       }
     }
     if (myTunnels.length > 0) m.tunnels = myTunnels;
