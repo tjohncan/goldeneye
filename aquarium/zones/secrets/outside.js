@@ -674,6 +674,51 @@ const firmamentColorFn = (lpx, lpy, lpz) => {
   return [r * c, g * c, b * c];
 };
 
+// Seabed + beach dressing — scallop shells, starfish, coral heads,
+// and dark stones scattered across the sand, painted from a jittered
+// cell hash (the clouds.js trick, grounded): zero Items, cost only at
+// sand-level ground hits, ~1 in 7 cells carries a feature. Coral
+// keeps to properly underwater depths; shells and starfish wash all
+// the way up the beach.
+const _decorHash = (a, b, c) => {
+  const x = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453;
+  return x - Math.floor(x);
+};
+const DECOR_CELL = 16;
+const seabedDecor = (lpx, lpy, lpz) => {
+  const cx = Math.floor(lpx / DECOR_CELL), cz = Math.floor(lpz / DECOR_CELL);
+  if (_decorHash(cx, cz, 1) > 0.15) return null;
+  const fx = (cx + 0.3 + _decorHash(cx, cz, 2) * 0.4) * DECOR_CELL;
+  const fz = (cz + 0.3 + _decorHash(cx, cz, 3) * 0.4) * DECOR_CELL;
+  const dx = lpx - fx, dz = lpz - fz;
+  const d2 = dx * dx + dz * dz;
+  if (d2 > 16) return null;
+  const kind = _decorHash(cx, cz, 4);
+  if (kind < 0.30) {
+    // Scallop shell — cream with radial ribs.
+    if (d2 > 2.1) return null;
+    const rib = Math.floor((Math.atan2(dz, dx) + Math.PI) * 2.23) & 1;
+    return rib === 0 ? [238, 228, 206] : [214, 200, 176];
+  }
+  if (kind < 0.55) {
+    // Starfish — five arms around a core, rotated per cell.
+    const arm = Math.cos(5 * Math.atan2(dz, dx) + _decorHash(cx, cz, 5) * 6.28);
+    const rad = 0.6 + (arm > 0 ? 1.4 * arm * arm : 0);
+    if (d2 > rad * rad) return null;
+    return [206, 112, 66];
+  }
+  if (kind < 0.80 && lpy < SHACK_PLATEAU_Y - 14) {
+    // Coral head — pink mottle, underwater only.
+    if (d2 > 7.8) return null;
+    const mottle = Math.sin(lpx * 2.1) * Math.cos(lpz * 1.9);
+    return mottle > 0.35 ? [216, 96, 96] : [174, 64, 74];
+  }
+  // Dark sea stone.
+  if (d2 > 4.6) return null;
+  const shade = Math.sin(lpx * 1.3 + lpz * 0.9) * 8;
+  return [96 + shade, 96 + shade, 102 + shade];
+};
+
 // Ground strata, keyed off world Y relative to the shack plateau:
 // deep seafloor sand below; lighter sand mid; beach tan right at the
 // plateau line; grass green just above; brown dirt higher; pale gray
@@ -693,6 +738,10 @@ const groundColorFn = (lpx, lpy, lpz) => {
     if (track !== null) return track;
     const lane = village.paintLane(lpx, lpz);
     if (lane !== null) return lane;
+  } else if (lpy < SHACK_PLATEAU_Y - 4) {
+    // Sand levels (beach + seabed) get the scattered dressing.
+    const decor = seabedDecor(lpx, lpy, lpz);
+    if (decor !== null) return decor;
   }
   if (lpy < SHACK_PLATEAU_Y - 25) return [180, 165, 130];
   if (lpy < SHACK_PLATEAU_Y - 10) return [200, 185, 150];
