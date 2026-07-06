@@ -375,8 +375,15 @@ const groundHeight = (px, pz) => {
 // beneath. Both items are collides:false — fish swims through.
 const WATER_HALF_X    = 1000;
 const WATER_HALF_Y    = 0.05;
-const WATER_HALF_Z    = 460;                   // half-depth of cove water
-const WATER_CENTER_Z  = +540;                  // pushed +Z so the slab spans z ≈ [80, 1000]
+// Slab spans z ∈ [0, 1000]: the WHOLE +Z hemisphere. The waterline
+// circle (ground crossing sea level at r ≈ 98) swings down to z ≈ 0
+// on the cove's ±X flanks — the first draft started the slab at
+// z = 80, which left a below-sea-level sand strip on each flank with
+// no water over it and the slab's sheer side face standing as a
+// glass wall at its end (with the fog box's cut face as a shadow
+// under it). The z = 0 edge buries under the plateau, never seen.
+const WATER_HALF_Z    = 500;
+const WATER_CENTER_Z  = +500;
 // Underwater fog box — large translucent volume below the water surface
 // in the cove hemisphere. Camera below sea level picks up the tint at
 // step zero. Top at sea level, bottom well below the deep seafloor (so
@@ -1186,7 +1193,7 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   );
 
   const harborLife = harbor.addToScene(add, { seaLevelY: SEA_LEVEL_Y });
-  const swimmers   = seaLife.addToScene(add);
+  const swimmers   = seaLife.addToScene(add, { floorY: groundHeight });
   const flyers     = skyLife.addToScene(add, { perches });
   const railway    = train.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
 
