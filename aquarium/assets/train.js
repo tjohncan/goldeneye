@@ -85,7 +85,11 @@ export const paintTrack = (lpx, lpz) => {
   const r = Math.hypot(lpx, lpz);
   if (r < TRACK_R - BED_HALF_R - 0.6 || r > TRACK_R + BED_HALF_R + 0.6) return null;
   const th = Math.atan2(lpz, lpx);
-  if (th < PORTAL_A_TH || th > PORTAL_B_TH) return null;
+  // Painted through to the TURN angles, well inside each mountain —
+  // the rising skirt occludes the deep part naturally, so the rails
+  // run visually all the way into the dark of the arch instead of
+  // stopping short on open grass.
+  if (th < TURN_A_TH || th > TURN_B_TH) return null;
   const dr = r - TRACK_R;
   if (Math.abs(Math.abs(dr) - RAIL_OFFSET) < RAIL_HALF_W) return [88, 92, 98];  // steel
   const s = th * TRACK_R;                                  // arc length coordinate
@@ -97,7 +101,7 @@ export const paintTrack = (lpx, lpz) => {
 
 // ─────────────────────────── schedule ───────────────────────────
 
-const RUN_SECONDS   = 95;                     // one traverse
+const RUN_SECONDS   = 118;                    // one traverse (~5.7 u/s — chaseable)
 const PAUSE_SECONDS = 25;                     // rest inside the mountain
 const PERIOD        = 2 * (RUN_SECONDS + PAUSE_SECONDS);
 const PHASE_OFFSET  = RUN_SECONDS / 2;        // page load catches it mid-arc
