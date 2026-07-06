@@ -71,7 +71,7 @@ import { sdfGrad } from './scene.js';
  * }} Lighting
  */
 
-const MAX_STEPS    = 44;
+const MAX_STEPS    = 60;
 const HIT_EPSILON  = 0.001;
 const MAX_DIST     = 1000;      // default safety cap; per-call override via lighting.maxDist
 const NORMAL_EPS   = 0.0015;
@@ -96,6 +96,18 @@ const ALPHA_STOP   = 0.02;      // bail when remaining alpha drops below this
  *  positive) and re-hit it, stacking its tint several times per
  *  crossing at grazing angles. */
 const EPS_SLOPE    = 0.005;
+
+/** Forced-hit window on step exhaustion, as a multiple of the relaxed
+ *  hit threshold. A ray that spends its whole step budget CREEPING
+ *  toward a surface it never quite reaches (tangent rays along
+ *  conservatively-scaled SDFs — mountain flanks, grazing ground) used
+ *  to fall through to the background mix, punching a background-
+ *  colored halo through the silhouette onto whatever lay behind. If
+ *  the ray dies within this window of its nearest surface, shade that
+ *  surface instead. The positional error is a few relaxed epsilons —
+ *  sub-pixel at the distances where exhaustion happens — while the
+ *  halo it replaces was a full-pixel artifact. */
+const FORCED_HIT   = 4;
 
 /** @type {Lighting} sun straight up, dim ambient, black miss-color. */
 const DEFAULT_LIGHTING = {
@@ -249,6 +261,11 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
   let remaining = 1.0;
   _insideLen = 0;
 
+  // Hoisted out of the loop so the forced-hit fallback below can see
+  // what the final step was converging on.
+  let nearestD = Infinity;
+  let nearestItem = null;
+
   for (let step = 0; step < MAX_STEPS; step++) {
     if (remaining < ALPHA_STOP) break;
 
@@ -280,8 +297,8 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
     const region = _regionFn !== null ? _regionFn(px, py, pz) : null;
 
     // Find nearest non-inside surface among candidates.
-    let nearestD = Infinity;
-    let nearestItem = null;
+    nearestD = Infinity;
+    nearestItem = null;
     for (let i = 0; i < sceneLen; i++) {
       const item = scene[i];
       // Region filter. Single-key items mismatch out fast; array-keyed
@@ -365,6 +382,54 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
     }
 
     if (t > _maxDist) break;
+  }
+
+  // Forced hit on step exhaustion (see FORCED_HIT): if the march died
+  // while converging on a surface — within a few relaxed epsilons —
+  // shade that surface rather than leaking background through the
+  // silhouette. Skipped when the item is one the ray is currently
+  // inside (a translucent it just tinted; shading again would stack
+  // its contribution). Shading mirrors the in-loop hit path.
+  if (nearestItem !== null && remaining >= ALPHA_STOP) {
+    let isInside = false;
+    for (let k = 0; k < _insideLen; k++) {
+      if (_inside[k] === nearestItem) { isInside = true; break; }
+    }
+    if (!isInside) {
+      const px = ox + t * dx;
+      const py = oy + t * dy;
+      const pz = oz + t * dz;
+      const ip = nearestItem.position;
+      const lpx = px - ip[0], lpy = py - ip[1], lpz = pz - ip[2];
+      const d = nearestItem.sdf(lpx, lpy, lpz);
+      if (d < FORCED_HIT * (HIT_EPSILON + t * EPS_SLOPE)) {
+        const [gx, gy, gz] = sdfGrad(nearestItem.sdf, lpx, lpy, lpz, d, NORMAL_EPS);
+        const glen = Math.sqrt(gx * gx + gy * gy + gz * gz);
+
+        let hLx = lx, hLy = ly, hLz = lz, hAmbient = ambient;
+        if (_byRegionShading !== null && _regionFn !== null) {
+          const r = _byRegionShading[_regionFn(px, py, pz)];
+          if (r !== undefined) {
+            hLx = r.lx; hLy = r.ly; hLz = r.lz; hAmbient = r.ambient;
+          }
+        }
+
+        let brightness = hAmbient;
+        if (glen > 1e-9) {
+          const ndotl = (gx * hLx + gy * hLy + gz * hLz) / glen;
+          if (ndotl > 0) brightness += (1 - hAmbient) * ndotl;
+        }
+
+        const c = nearestItem.colorFn !== null
+          ? nearestItem.colorFn(lpx, lpy, lpz)
+          : nearestItem.color;
+        const w = nearestItem.opacity * remaining;
+        accR += c[0] * brightness * w;
+        accG += c[1] * brightness * w;
+        accB += c[2] * brightness * w;
+        remaining *= 1 - nearestItem.opacity;
+      }
+    }
   }
 
   // Background mix for unaccumulated alpha.
