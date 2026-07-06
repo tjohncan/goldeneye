@@ -121,6 +121,7 @@ const sharkColorFn = (lpx, lpy, lpz) => {
 // ─────────────────────────── octopus ───────────────────────────
 
 const OCTO = makePose(0);
+OCTO.ps = 1;                                   // arm-splay pulse scale
 
 // Mantle pair + eight single-segment arms splayed outward-down with a
 // slight swirl (each arm's foot angle leads its root by 0.35 rad, so
@@ -128,13 +129,17 @@ const OCTO = makePose(0);
 // — the cost ceiling that kept it out of round one — but its AABB is
 // small and seafloor-local, so rays only pay when actually looking at
 // the den.
-const octopusShape = (() => {
-  const parts = [
-    smoothUnionSDF(1.2,
-      translateSDF([0, 1.8, -1.2], sphereSDF(4.2)),        // mantle
-      translateSDF([0, 0.6, 1.8], sphereSDF(3.4)),         // head, eyes side (+Z)
-    ),
-  ];
+//
+// The arm bundle is kept SEPARATE from the mantle so the jet-pulse can
+// breathe it: the SDF below scales the arms' horizontal frame by the
+// mutable OCTO.ps (bunch in quick, splay out slow) — exact scaled-SDF
+// form d = s·sdf(p/s), no per-frame closure rebuilds.
+const octoMantleShape = smoothUnionSDF(1.2,
+  translateSDF([0, 1.8, -1.2], sphereSDF(4.2)),          // mantle
+  translateSDF([0, 0.6, 1.8], sphereSDF(3.4)),           // head, eyes side (+Z)
+);
+const octoArmsShape = (() => {
+  const parts = [];
   for (let k = 0; k < 8; k++) {
     const a  = (k + 0.5) * Math.PI / 4;
     const a2 = a + 0.35;
@@ -146,6 +151,16 @@ const octopusShape = (() => {
   }
   return unionSDF(...parts);
 })();
+const octopusSdf = (lpx, lpy, lpz) => {
+  const x1 = lpx * OCTO.cy - lpz * OCTO.sy;
+  const z1 = lpx * OCTO.sy + lpz * OCTO.cy;
+  const by = lpy * OCTO.cp - z1 * OCTO.sp;
+  const bz = lpy * OCTO.sp + z1 * OCTO.cp;
+  const dMantle = octoMantleShape(x1, by, bz);
+  const s = OCTO.ps;
+  const dArms = octoArmsShape(x1 / s, by, bz / s) * s;
+  return dMantle < dArms ? dMantle : dArms;
+};
 
 const octopusColorFn = (lpx, lpy, lpz) => {
   const x1 = lpx * OCTO.cy - lpz * OCTO.sy;
@@ -189,10 +204,12 @@ const pathAt = (c, t) => {
 // should be able to chase anything down for a close look.
 
 // Orca: wide deep laps mid-cove, ~2 min per revolution. Depth cycle
-// crests at -29 — back + dorsal above the waterline — and sounds to
-// -141. Path stays over water deeper than the body everywhere.
+// crests at -29 — back + dorsal above the waterline — and sounds
+// toward -141, with update() clamping the dive to the seafloor's
+// actual depth (the fixed cycle used to bury it nose-first in the
+// shallower reaches). Circuit recentered clear of the octopus den.
 const ORCA_PATH = {
-  cx: 0, cz: 350, baseR: 170, rAmp: 25, rFreq: 0.021, rPhase: 1.0,
+  cx: -40, cz: 400, baseR: 175, rAmp: 20, rFreq: 0.021, rPhase: 1.0,
   angSpeed: 2 * Math.PI / 125, phi0: 0,
   baseY: -85, yAmp: 56, yFreq: 0.085, yPhase: 0,
 };
@@ -217,10 +234,17 @@ const OCTO_PATH = {
 };
 const OCTO_PITCH_MAX = 0.12;
 
-// Update one creature: move to the path point, derive yaw/pitch from
-// the position delta, write pose trig + item position.
-const advance = (P, item, path, t, pitchMax) => {
+// Update one creature: move to the path point (optionally clamped
+// above the seafloor via `floorY` — the analytic depth cycle knows
+// nothing about the terrain under it), derive yaw/pitch from the
+// position delta, write pose trig + item position. A clamped stretch
+// reads as the animal following the bottom.
+const advance = (P, item, path, t, pitchMax, floorY) => {
   const p = pathAt(path, t);
+  if (floorY !== undefined) {
+    const floor = floorY(p[0], p[2]) + 10;
+    if (p[1] < floor) p[1] = floor;
+  }
   const dx = p[0] - P.x, dy = p[1] - P.y, dz = p[2] - P.z;
   const h2 = dx * dx + dz * dz;
   if (h2 > 1e-8) {
@@ -240,12 +264,15 @@ const advance = (P, item, path, t, pitchMax) => {
 };
 
 /**
- * Register the orca + shark via the outside-tagged `add` helper.
+ * Register the sea life via the outside-tagged `add` helper.
  *
  * @param {(item: Item) => Item} add
+ * @param {{ floorY: (px: number, pz: number) => number }} opts
+ *        seafloor height lookup (outside.js's groundHeight) — clamps
+ *        the orca's dives above the terrain.
  * @returns {{ update: (timeMs: number) => void }}
  */
-export const addToScene = (add) => {
+export const addToScene = (add, { floorY }) => {
   const t0 = performance.now() / 1000;
   const orcaStart  = pathAt(ORCA_PATH, t0);
   ORCA.x = orcaStart[0]; ORCA.y = orcaStart[1]; ORCA.z = orcaStart[2];
@@ -282,18 +309,24 @@ export const addToScene = (add) => {
     color:    [168, 84, 58],
     colorFn:  octopusColorFn,
     position: [OCTO.x, OCTO.y, OCTO.z],
-    sdf:      creatureFrame(OCTO, octopusShape),
-    // Arm feet reach 8.5 + 0.62 radially; tips dip to -6.4 upright and
-    // ~-7.3 at max pitch (the 9.1 radial reach tilted by 0.10).
-    boundingBox: [9.7, 7.5, 9.7],
+    sdf:      octopusSdf,
+    // Arm feet reach (8.5 + 0.62) × max splay 1.14 ≈ 10.4 radially;
+    // tips dip to ~-7.3 at max pitch.
+    boundingBox: [10.7, 7.5, 10.7],
   });
 
   return {
     update(timeMs) {
       const t = timeMs / 1000;
-      advance(ORCA,  orca,    ORCA_PATH,  t, ORCA_PITCH_MAX);
+      advance(ORCA,  orca,    ORCA_PATH,  t, ORCA_PITCH_MAX, floorY);
       advance(SHARK, shark,   SHARK_PATH, t, SHARK_PITCH_MAX);
       advance(OCTO,  octopus, OCTO_PATH,  t, OCTO_PITCH_MAX);
+      // Jet pulse: arms snap IN over a quarter cycle, splay back out
+      // over the rest — the classic cephalopod stroke.
+      const phase = (t * 0.4) % 1;
+      OCTO.ps = phase < 0.25
+        ? 1.14 - (phase / 0.25) * 0.36
+        : 0.78 + ((phase - 0.25) / 0.75) * 0.36;
     },
   };
 };
