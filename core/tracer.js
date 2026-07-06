@@ -109,10 +109,12 @@ const EPS_SLOPE    = 0.005;
  *  dies within this window of its nearest surface, shade that surface
  *  instead. The positional error is a few relaxed epsilons — sub-pixel
  *  at the distances where exhaustion happens — while the halo it
- *  replaces was a full-pixel artifact. 6 also catches rays that skim
- *  a flat surface nearly parallel for hundreds of units; at 6×0.005·t
- *  the window is still ~60% of a pixel's footprint. */
-const FORCED_HIT   = 6;
+ *  replaces was a full-pixel artifact. 8 also catches rays that skim
+ *  a flat surface nearly parallel for hundreds of units, and the
+ *  dashed leaks along shallow heightfield skirts where the creep is
+ *  double (conservative SDF scale × grazing angle); at 8×0.005·t the
+ *  window is still ~80% of a pixel's footprint. */
+const FORCED_HIT   = 8;
 
 /** @type {Lighting} sun straight up, dim ambient, black miss-color. */
 const DEFAULT_LIGHTING = {
