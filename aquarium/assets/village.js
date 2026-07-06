@@ -1,14 +1,15 @@
-// aquarium/assets/village.js — static structures in the cove: a small
-// fishing village on the back plateau (cottages + a fishmonger's shop),
-// a striped lighthouse on the beach knoll, scattered trees, and the
-// wooden dock reaching from the beach into the water on the shack
-// door's X column.
+// aquarium/assets/village.js — static structures in the cove: the
+// fishing village on the far side of the mesa (cottages, a fishmonger's
+// shop, and a proper manor), a lighthouse out on the +X headland, trees
+// at two scales, and the wooden dock reaching from the beach into the
+// water on the shack door's X column.
 //
-// SCALE: everything here is sized against the SHACK (62 wide, ridge at
-// +33) — a cottage is a real building beside it, the lighthouse
-// overtops it, trees reach past the cottage eaves. First draft had the
-// village at ~45% of this and it read as a toy train-set diorama next
-// to the building you exit.
+// SCALE + PLACEMENT: the shack is a ONE-ROOM kitchen — real houses
+// dwarf it. The manor's ridge (+57) runs double the shack's (+33);
+// even the shop out-tops it. And the village lives BEYOND the mesa
+// now (z ≈ -290..-440, the unused back-bowl between the mountain
+// ranges), so the shack stands alone at the center and discovering
+// the village means rounding the mesa — separation sells the size.
 //
 // Everything here is inert — no per-frame update. Each structure is ONE
 // Item built from a handful of primitives, with all visual richness
@@ -50,17 +51,17 @@ const yawFootprint = (hx, hz, yaw) => {
   return [hx * c + hz * s, hx * s + hz * c];
 };
 
-// Perch facing the world origin (the shack) — the natural "look at the
-// village green" pose for a perched fish.
+// Perch facing the world origin (the shack) — the natural "look back
+// toward the center of the bowl" pose for a perched fish.
 const perchFacingHome = (x, y, z, ax, ay, az) =>
   ({ x, y, z, yaw: Math.atan2(-x, -z), ax, ay, az });
 
 
 // ─────────────────────────── cottages ───────────────────────────
 
-// One cottage = plaster body box + overhanging gable roof (triPrism).
+// One building = plaster body box + overhanging gable roof (triPrism).
 // Local origin at the building's mid-height so the AABB centers there.
-const ROOF_OVERHANG = 1.5;
+const ROOF_OVERHANG = 1.8;
 
 const makeCottageSdf = ({ hx, bodyHalfH, hz, roofH, yaw }) => {
   const H = 2 * bodyHalfH + roofH;             // total height, base to ridge
@@ -178,41 +179,42 @@ const makeCottageColorFn = ({ hx, bodyHalfH, hz, roofH, yaw, pal, stories, fishS
 // ─────────────────────────── lighthouse ───────────────────────────
 
 // Red/white striped tower + gallery disc + lamp room + dome cap, one
-// item. Sized like a real lighthouse against the shack: base -21.6,
-// cap top +42.8 — it overtops the shack's ridge (+33) by a storey.
-// The lamp-room band paints over-bright so the light reads lit from
-// every angle without a separate glow item; the tower stripes are
-// over-bright too (vertical cylinder under a straight-up sun shades
-// ambient-only — native tint would read near-black from the dock).
-const LH_TOWER_HH   = 26;
-const LH_TOWER_R    = 5.2;
-const LH_GALLERY_R  = 7.0;
-const LH_BASE_Y     = -21.6;                  // embeds ~1 into the knoll
-const LH_POS_Y      = 10.6;                   // item origin: mid of base..cap top
-const LH_HALF_Y     = 32.4;
+// item — out on the +X headland now (the plateau bluff overlooking the
+// water), farther down-shore and grown to a real seamark: base -14,
+// cap top ≈ +72, more than double the shack's ridge. The lamp-room
+// band paints over-bright so the light reads lit from every angle
+// without a separate glow item; the tower stripes are over-bright too
+// (a vertical cylinder under a straight-up sun shades ambient-only —
+// native tint would read near-black from the dock).
+const LH_TOWER_HH   = 35;
+const LH_TOWER_R    = 7.0;
+const LH_GALLERY_R  = 9.4;
+const LH_POS_Y      = 29;                     // item origin: mid of base..cap top
+const LH_HALF_Y     = 43;
 
 const lighthouseSdf = unionSDF(
-  translateSDF([0, -6.2, 0], cylinderSDF(LH_TOWER_HH, LH_TOWER_R)),   // base..+30.4
-  translateSDF([0, +20.2, 0], cylinderSDF(0.8, LH_GALLERY_R)),        // gallery disc
-  translateSDF([0, +24.0, 0], cylinderSDF(3.0, 4.0)),                 // lamp room
-  translateSDF([0, +27.8, 0], sphereSDF(4.4)),                        // dome cap
+  translateSDF([0, -8.0, 0], cylinderSDF(LH_TOWER_HH, LH_TOWER_R)),   // -14 .. +56 world
+  translateSDF([0, +27.8, 0], cylinderSDF(1.0, LH_GALLERY_R)),        // gallery disc
+  translateSDF([0, +32.6, 0], cylinderSDF(4.0, 5.4)),                 // lamp room
+  translateSDF([0, +37.0, 0], sphereSDF(5.9)),                        // dome cap
 );
 
 const lighthouseColorFn = (lpx, lpy, lpz) => {
-  if (lpy > +26.2) return [150, 45, 40];                    // dome cap
-  if (lpy > +21.0) return [660, 610, 390];                  // lamp room — over-bright
-  if (lpy > +19.3) return [58, 54, 58];                     // gallery ring
-  // Door at the tower base, facing the village (-Z side).
-  if (lpy < -25.4 && lpz < -3.2 && Math.abs(lpx) < 1.9) return [70, 50, 34];
-  const band = Math.floor((lpy + LH_HALF_Y) / 6.5) & 1;     // tower stripes
+  if (lpy > +34.9) return [150, 45, 40];                    // dome cap
+  if (lpy > +28.8) return [660, 610, 390];                  // lamp room — over-bright
+  if (lpy > +26.6) return [58, 54, 58];                     // gallery ring
+  // Door at the tower base, facing inland (-Z side).
+  if (lpy < -36.6 && lpz < -4.3 && Math.abs(lpx) < 2.6) return [70, 50, 34];
+  const band = Math.floor((lpy + LH_HALF_Y) / 8.6) & 1;     // tower stripes
   return band === 0 ? [385, 119, 94] : [439, 432, 414];
 };
 
 
 // ─────────────────────────── trees ───────────────────────────
 
-// Trunk + three-lobe canopy, mid-height local origin. Scales run
-// ~2.0–2.6 so a village tree tops out around a cottage's ridge.
+// Trunk + three-lobe canopy, mid-height local origin. Village trees
+// run sc 3.0–3.6 (proportioned to the big houses); the beach pair
+// stays modest; the mesa keeps its statement tree.
 const makeTreeSdf = (sc) => smoothUnionSDF(0.8 * sc,
   capsuleBetweenSDF([0, -5.5 * sc, 0], [0, 0.5 * sc, 0], 0.55 * sc),
   translateSDF([0, 2.0 * sc, 0],            sphereSDF(2.8 * sc)),
@@ -286,25 +288,29 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
   /** @type {Perch[]} */
   const perches = [];
 
-  // ── cottages on the back plateau ──
-  // Yaws vary so the lane between them bends; the fishmonger's shop
-  // (fishSign) anchors the row nearest the shack. `ridgePerches` > 1
-  // spreads extra landing spots along the bigger roofs.
+  // ── the village, beyond the mesa ──
+  // The lane bends between yaws; the fishmonger's shop anchors the
+  // near (mesa-side) end, the manor presides over the west row.
+  // `ridgePerches` > 1 spreads extra landing spots along big roofs.
   const cottages = [
-    { name: 'village-shop',        x: -62, z: -84, yaw: +0.18, sc: 2.2,
-      hx: 19.0, bodyHalfH: 12.0, hz: 15.0, roofH: 12.0, stories: 2, fishSign: true, ridgePerches: 2,
+    { name: 'village-manor',        x: -95, z: -335, yaw: +0.30, sc: 4.0,
+      hx: 28.0, bodyHalfH: 24.0, hz: 22.0, roofH: 22.0, stories: 2, fishSign: false, ridgePerches: 2,
+      pal: { wall: [226, 219, 202], wallLight: [240, 233, 216], wallDark: [178, 170, 152],
+             roof: [88, 94, 108], roofDark: [72, 78, 92], trim: [92, 78, 58] } },
+    { name: 'village-shop',         x: 0, z: -305, yaw: -0.15, sc: 2.8,
+      hx: 22.0, bodyHalfH: 14.0, hz: 17.0, roofH: 14.0, stories: 2, fishSign: true, ridgePerches: 2,
       pal: { wall: [242, 230, 202], wallLight: [252, 242, 218], wallDark: [188, 172, 148],
              roof: [186, 96, 64], roofDark: [158, 78, 52], trim: [96, 70, 48] } },
-    { name: 'village-cottage-sage', x: -14, z: -104, yaw: -0.26, sc: 2.2,
-      hx: 13.0, bodyHalfH: 10.0, hz: 12.0, roofH: 10.0, stories: 1, fishSign: false, ridgePerches: 1,
-      pal: { wall: [200, 210, 180], wallLight: [216, 224, 196], wallDark: [156, 166, 140],
-             roof: [104, 110, 122], roofDark: [86, 92, 104], trim: [88, 76, 58] } },
-    { name: 'village-cottage-tall', x: +34, z: -92, yaw: +0.42, sc: 2.3,
-      hx: 14.0, bodyHalfH: 15.5, hz: 13.0, roofH: 12.0, stories: 2, fishSign: false, ridgePerches: 2,
+    { name: 'village-cottage-tall', x: 125, z: -365, yaw: +0.50, sc: 3.2,
+      hx: 17.0, bodyHalfH: 19.0, hz: 15.0, roofH: 15.0, stories: 2, fishSign: false, ridgePerches: 2,
       pal: { wall: [232, 208, 150], wallLight: [244, 222, 168], wallDark: [186, 164, 116],
              roof: [186, 96, 64], roofDark: [158, 78, 52], trim: [96, 70, 48] } },
-    { name: 'village-cottage-blue', x: +72, z: -118, yaw: -0.55, sc: 2.0,
-      hx: 12.0, bodyHalfH: 9.0, hz: 11.0, roofH: 9.0, stories: 1, fishSign: false, ridgePerches: 1,
+    { name: 'village-cottage-sage', x: -38, z: -398, yaw: -0.35, sc: 2.6,
+      hx: 15.0, bodyHalfH: 11.5, hz: 13.5, roofH: 11.5, stories: 1, fishSign: false, ridgePerches: 1,
+      pal: { wall: [200, 210, 180], wallLight: [216, 224, 196], wallDark: [156, 166, 140],
+             roof: [104, 110, 122], roofDark: [86, 92, 104], trim: [88, 76, 58] } },
+    { name: 'village-cottage-blue', x: 72, z: -438, yaw: +0.70, sc: 2.4,
+      hx: 13.5, bodyHalfH: 10.0, hz: 12.0, roofH: 10.0, stories: 1, fishSign: false, ridgePerches: 1,
       pal: { wall: [176, 194, 210], wallLight: [192, 208, 222], wallDark: [138, 156, 174],
              roof: [96, 102, 114], roofDark: [80, 86, 98], trim: [80, 72, 62] } },
   ];
@@ -333,29 +339,31 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
     }
   }
 
-  // ── lighthouse on the beach knoll (+Z, still above the waterline) ──
-  // Ground at (55, 70) sits ≈ -20.6; base embeds ~1 into the sand.
-  const LH_X = 55, LH_Z = 70;
+  // ── lighthouse on the +X headland ──
+  // pz < 0 keeps it on the dry plateau bluff, right at the coast where
+  // the beach hemisphere begins — visible down-shore from the dock.
+  const LH_X = 150, LH_Z = -12;
   add({
     name:     'village-lighthouse',
     color:    [385, 119, 94],
     colorFn:  lighthouseColorFn,
     position: [LH_X, LH_POS_Y, LH_Z],
     sdf:      lighthouseSdf,
-    boundingBox: [LH_GALLERY_R + 0.2, LH_HALF_Y, LH_GALLERY_R + 0.2],
+    boundingBox: [LH_GALLERY_R + 0.2, LH_HALF_Y + 0.2, LH_GALLERY_R + 0.2],
   });
-  // Gallery-rim perch facing the open sea; cap-top perch facing home.
-  perches.push({ x: LH_X, y: LH_POS_Y + 21.4, z: LH_Z + LH_GALLERY_R - 0.6,
-                 yaw: 0, ax: 0, ay: 12, az: +10 });
-  perches.push(perchFacingHome(LH_X, LH_POS_Y + 32.6, LH_Z, 0, 12, 0));
+  // Gallery-rim perch facing the water; cap-top perch facing home.
+  perches.push({ x: LH_X, y: LH_POS_Y + 29.2, z: LH_Z + LH_GALLERY_R - 0.8,
+                 yaw: 0, ax: 0, ay: 13, az: +11 });
+  perches.push(perchFacingHome(LH_X, LH_POS_Y + 43.3, LH_Z, 0, 13, 0));
 
   // ── trees ──
-  // Village green + beach pair + one statement tree on the mesa top.
+  // Big ones shade the village; the beach pair stays modest; one
+  // statement tree on the mesa top.
   const trees = [
-    { x: +8,  z: -64,  sc: 2.2, seed: 1.3, baseY: plateauY, perch: true  },
-    { x: -32, z: -72,  sc: 2.0, seed: 3.7, baseY: plateauY, perch: true  },
-    { x: +44, z: -62,  sc: 2.4, seed: 5.1, baseY: plateauY, perch: true  },
-    { x: -64, z: -116, sc: 2.1, seed: 7.9, baseY: plateauY, perch: false },
+    { x: -45, z: -290, sc: 3.4, seed: 1.3, baseY: plateauY, perch: true  },
+    { x: +55, z: -335, sc: 3.0, seed: 3.7, baseY: plateauY, perch: false },
+    { x: 160, z: -420, sc: 3.2, seed: 5.1, baseY: plateauY, perch: true  },
+    { x: -115, z: -390, sc: 3.6, seed: 7.9, baseY: plateauY, perch: false },
     { x: +46, z: +46,  sc: 2.3, seed: 2.4, baseY: plateauY - 0.3, perch: true },
     { x: -40, z: +38,  sc: 2.0, seed: 6.2, baseY: plateauY - 0.1, perch: false },
     { x: mesa.x + 15, z: mesa.z + 9, sc: 2.6, seed: 4.4,
@@ -380,9 +388,7 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
   // ── dock ──
   // Aligned with the shack door's X column; deck top 2.8 above sea
   // level, shore end rooted right where the beach surface crosses
-  // deck height (z ≈ 92). Boosted-speed fish can hop through the
-  // 0.56-thick deck between frames — harmless (no region boundary
-  // involved), same as the collides:false water surface.
+  // deck height (z ≈ 92).
   const DOCK_X = 15, DOCK_Z = 122;
   const DOCK_POS_Y = -36;                     // deck top = seaLevelY + 2.8 = -22.2
   add({
@@ -392,6 +398,21 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
     position: [DOCK_X, DOCK_POS_Y, DOCK_Z],
     sdf:      dockSdf,
     boundingBox: [3.5, 14.1, DOCK_DECK_HALF[2] + 0.3],
+  });
+  // Physics pad under the deck: the visible deck is 0.56 thick and a
+  // boosted cove fish moves 1.44/frame — it used to pass straight
+  // through between physics samples. This invisible slab thickens the
+  // COLLIDER to 2.4 (> displacement + 2·fishRadius) without touching
+  // the visible proportions. invisible:true drops it from the tracer
+  // at pack time; physics still sees it (collides defaults true). It
+  // hugs the deck's underside so swimming beneath the dock, between
+  // the posts, still works below y ≈ -24.8.
+  add({
+    name:      'village-dock-pad',
+    color:     [0, 0, 0],
+    position:  [DOCK_X, -23.45, DOCK_Z],
+    sdf:       boxSDF([3.4, 1.15, 30]),
+    invisible: true,
   });
   // Two perches on the sea-end corners of the deck, facing out.
   const deckTopY = seaLevelY + 2.8;

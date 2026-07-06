@@ -127,10 +127,10 @@ const zepBasketColorFn = (lpx, lpy, lpz) => {
 const FISH_COUNT = 13;
 
 // Cruise-band + steering constants. The band floor clears the tallest
-// static obstacle (mesa tree top ≈ 71), so cruise legs never intersect
-// geometry; only STAGE/FINAL descend below it, along per-perch
-// corridors chosen to be open air.
-const CRUISE_Y_MIN = 74, CRUISE_Y_MAX = 115;
+// static obstacles (lighthouse cap ≈ 72, mesa tree ≈ 71, manor ridge
+// 57), so cruise legs never intersect geometry; only STAGE/FINAL
+// descend below it, along per-perch corridors chosen to be open air.
+const CRUISE_Y_MIN = 80, CRUISE_Y_MAX = 125;
 const CRUISE_R_MIN = 60, CRUISE_R_MAX = 320;
 const CRUISE_SPEED = 16;
 const FINAL_SPEED  = 3.5;
@@ -138,12 +138,14 @@ const STEER_TAU    = 0.7;
 
 const MODE_CRUISE = 0, MODE_STAGE = 1, MODE_FINAL = 2, MODE_SIT = 3;
 
-// Fish body — one sphere + tail fan; the flock is 6 items so each
-// SDF stays 2 primitives. boundingRadius (not box) — for a shape this
-// small the sphere test is the cheaper reject.
+// Fish body — one sphere + tail; each fish SDF stays 2 primitives.
+// Tail trimmed toward a compact triangle-read (was a taller "flowing
+// mane" fan); a fuller goldfish style pass is still on the wishlist.
+// boundingRadius (not box) — for a shape this small the sphere test
+// is the cheaper reject.
 const makeFishShape = () => unionSDF(
   translateSDF([0, 0, 0.1], sphereSDF(0.52)),
-  translateSDF([0, 0, -0.75], boxSDF([0.05, 0.42, 0.38])),
+  translateSDF([0, 0, -0.70], boxSDF([0.05, 0.30, 0.28])),
 );
 
 // Over-bright (~1.5×) like the zeppelin: tiny fliers seen against

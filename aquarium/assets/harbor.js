@@ -173,6 +173,22 @@ export const addToScene = (add, { seaLevelY }) => {
     // -8.7 horizontal at worst yaw.
     boundingBox: [8.8, 11.0, 8.8],
   });
+  // Sail physics pad — the visible sail is 0.2 thick and a boosted
+  // fish moves 1.44/frame, so it sailed straight through the canvas
+  // between physics samples. Invisible thickened slab in the same
+  // boat frame (tracer drops it at pack time; physics keeps it) makes
+  // the sail feel like fabric you thump into. Mast/boom stay thin —
+  // clipping past a pole reads fine; a wall shouldn't.
+  const framedSailPad = boatFrame(
+    translateSDF([0, 12.30, -3.40], boxSDF([1.0, 8.0, 4.3])),
+  );
+  const sailPad = add({
+    name:      'sloop-sail-pad',
+    color:     [0, 0, 0],
+    position:  [S.x, seaLevelY + 0.5 + RIG_DY, S.z],
+    sdf:       (px, py, pz) => framedSailPad(px, py + RIG_DY, pz),
+    invisible: true,
+  });
 
   const BUOY_X = 40, BUOY_Z = 185;
   const buoy = add({
@@ -232,6 +248,9 @@ export const addToScene = (add, { seaLevelY }) => {
       rig.position[0]  = S.x;
       rig.position[1]  = y + RIG_DY;
       rig.position[2]  = S.z;
+      sailPad.position[0] = S.x;
+      sailPad.position[1] = y + RIG_DY;
+      sailPad.position[2] = S.z;
 
       buoy.position[1] = seaLevelY + 0.3 + 0.4 * Math.sin(t * 1.1 + 2.0);
     },
