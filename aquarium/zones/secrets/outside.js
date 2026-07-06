@@ -10,13 +10,20 @@
 // ramp, leaving plenty of horizontal room for boats, rocks, roads,
 // etc. in later iterations.
 //
-// First-pass architecture: dome shell + linear ground slope + shack
-// (the building we exit, with the bore cut through it) + keyhole +
-// brass plates + brass knobs + region veils.
+// Architecture: dome shell + heightfield ground + shack (the building
+// we exit, with the bore cut through it, now wearing a gabled roof) +
+// keyhole + brass plates + brass knobs + region veils — plus the LIVING
+// COVE layered on through the asset modules: mountains + mesa
+// (mountains.js), fishing village / lighthouse / trees / dock
+// (village.js), the wandering sloop + buoy (harbor.js), orca + shark
+// underwater (seaLife.js), and the goldfish zeppelin + perching
+// sky-goldfish flock (skyLife.js). Animated assets hand back per-frame
+// update callbacks, which addToScene returns for world.js to thread
+// into the main tick.
 
 import {
   registerItem,
-  sphereSDF, boxSDF,
+  sphereSDF, boxSDF, triPrismSDF,
   cutSDF, cutSDFCullableBox, unionSDF,
   translateSDF,
 } from '../../../core/scene.js';
@@ -39,6 +46,10 @@ import {
 } from './chamber.js';
 import { sampleClouds }    from '../../assets/clouds.js';
 import * as mountains      from '../../assets/mountains.js';
+import * as village        from '../../assets/village.js';
+import * as harbor         from '../../assets/harbor.js';
+import * as seaLife        from '../../assets/seaLife.js';
+import * as skyLife        from '../../assets/skyLife.js';
 import { frameTimeSec }    from '../../../core/tracer.js';
 import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
@@ -436,6 +447,24 @@ const backWindowGlassSdf  = boxSDF([
 ]);
 const backWindowSdf = unionSDF(backWindowFrameSdf, backWindowGlassSdf);
 
+// Shack roof — gabled prism capping the flat building top, ridge along
+// X, eaves overhanging the walls by 2, with a brick chimney on the
+// +X/+Z quarter. Sits ON the house shell (base plane flush at
+// +HOUSE_HALF_Y); solid wedge, so it adds no route into the interior.
+// Item origin at mid-rise for a centered AABB.
+const ROOF_HALF_X  = HOUSE_HALF_X + 2;
+const ROOF_HALF_Z  = HOUSE_HALF_Z + 2;
+const ROOF_RISE    = 14;
+const ROOF_BASE_Y  = HOUSE_HALF_Y;              // world 19
+const ROOF_MID_Y   = ROOF_BASE_Y + ROOF_RISE / 2;
+const CHIMNEY_X    = 18, CHIMNEY_Z = 8;         // roof-local = world (item at x/z 0)
+const shackRoofSdf = unionSDF(
+  translateSDF([0, -ROOF_RISE / 2, 0], triPrismSDF(ROOF_HALF_X, ROOF_HALF_Z, ROOF_RISE)),
+  translateSDF([CHIMNEY_X, 4.6, CHIMNEY_Z], boxSDF([1.6, 3.6, 1.6])),
+);
+// Chimney top (world) — exported shape math for the perch below.
+const CHIMNEY_TOP_Y = ROOF_MID_Y + 4.6 + 3.6;   // 34.2
+
 // House exterior cut: keyhole bore + the secret zones' air shapes (so
 // the wall has air where the mousehole pocket and chamber pocket live,
 // matching the geometry the secret-room shells already establish).
@@ -753,6 +782,26 @@ const backWindowColorFn = (lpx, lpy, lpz) => {
   return [60, 40, 25];                                   // wall-facing back / sides
 };
 
+// Shack roof: slate shingle rows on the slopes, plank-striped wood at
+// the gable ends, brick chimney with a dark cap. Roof is axis-aligned
+// so no un-rotation needed; lpy is relative to ROOF_MID_Y.
+const shackRoofColorFn = (lpx, lpy, lpz) => {
+  const onChimney = Math.abs(lpx - CHIMNEY_X) < 1.7 && Math.abs(lpz - CHIMNEY_Z) < 1.7
+                 && lpy > 2.0;
+  if (onChimney) {
+    if (lpy > 7.6) return [70, 60, 58];                  // cap
+    const course = Math.floor(lpy * 1.4) & 1;
+    return course === 0 ? [148, 74, 56] : [128, 62, 48];
+  }
+  if (Math.abs(lpx) > ROOF_HALF_X - 0.2) {               // gable ends
+    const plank = Math.floor(lpy * 1.6) & 1;
+    return plank === 0 ? [104, 68, 42] : [88, 56, 34];
+  }
+  const wave = Math.sin(lpx * 0.9) * 5;
+  const row  = Math.floor((ROOF_RISE / 2 - lpy) / 1.1) & 1;
+  return row === 0 ? [94 + wave, 78 + wave, 68] : [78 + wave, 64 + wave, 56];
+};
+
 
 // ─────────────────────────── scene build ───────────────────────────
 
@@ -760,11 +809,16 @@ const backWindowColorFn = (lpx, lpy, lpz) => {
  * Add the outside zone to the scene. Carves the keyhole bore through
  * the caller-supplied kitchen `door` and `room` handles.
  *
+ * Returns the animated assets' per-frame update callbacks (sloop,
+ * sea creatures, zeppelin + flock) for world.js to append to the
+ * scene's perFrameUpdates — the same contract as the bubble pump.
+ *
  * @param {import('../../../core/scene.js').Scene} scene
  * @param {{
  *   room: import('../kitchen.js').KitchenHandle,
  *   door: import('../kitchen.js').KitchenHandle,
  * }} kitchen   Handles to kitchen surfaces this zone extends.
+ * @returns {{ updates: Array<(timeMs: number) => void> }}
  */
 export const addToScene = (scene, { room: kitchenRoom, door }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_OUTSIDE });
@@ -986,10 +1040,46 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     boundingBox: VEIL_BOUND_HALF,
   });
 
-  // Mountain range + foothill — registered via the same outside-tagged
-  // `add` helper so mountain items participate in the cove's region
-  // cull. mountains.js owns layout + colorFn; outside.js hands the
-  // helper through plus the cove's plateau elevation (single source
-  // of truth for ground Y).
-  mountains.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
+  // Shack roof — gabled cap with chimney. Registered here (not in
+  // village.js) because it's part of the building this zone owns.
+  add({
+    name:     'shack-roof',
+    color:    [94, 78, 68],
+    colorFn:  shackRoofColorFn,
+    position: [0, ROOF_MID_Y, 0],
+    sdf:      shackRoofSdf,
+    boundingBox: [ROOF_HALF_X + 0.1, ROOF_RISE / 2 + 1.3, ROOF_HALF_Z + 0.1],
+  });
+
+  // ── the living cove ──
+  // Mountain range + mesa first (returns the mesa's surface geometry),
+  // then the static village (returns the flock's perch list), then the
+  // animated assets. All registered through the same outside-tagged
+  // `add`, so everything participates in the cove's region cull and
+  // costs the kitchen-side regions nothing.
+  const { mesa } = mountains.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
+
+  const { perches } = village.addToScene(add, {
+    plateauY:  SHACK_PLATEAU_Y,
+    seaLevelY: SEA_LEVEL_Y,
+    mesa,
+  });
+
+  // Shack perches: both ends of the roof ridge (one facing the sea,
+  // one the village), the chimney top, and — the closest seat in the
+  // house — the outside brass doorknob. Approach corridors: straight
+  // down from above for the roofline; out along +Z for the knob so the
+  // glide never crosses the door face.
+  perches.push(
+    { x: -14, y: ROOF_BASE_Y + ROOF_RISE + 0.45, z: 0, yaw: Math.PI, ax: 0, ay: 12, az: 0 },
+    { x: +14, y: ROOF_BASE_Y + ROOF_RISE + 0.45, z: 0, yaw: 0,       ax: 0, ay: 12, az: 0 },
+    { x: CHIMNEY_X, y: CHIMNEY_TOP_Y + 0.42, z: CHIMNEY_Z, yaw: 0,   ax: 0, ay: 10, az: 0 },
+    { x: KEYHOLE_X, y: -0.59, z: OUTSIDE_KNOB_Z, yaw: 0,             ax: 0, ay: 3, az: 14 },
+  );
+
+  const harborLife = harbor.addToScene(add, { seaLevelY: SEA_LEVEL_Y });
+  const swimmers   = seaLife.addToScene(add);
+  const flyers     = skyLife.addToScene(add, { perches });
+
+  return { updates: [harborLife.update, swimmers.update, flyers.update] };
 };

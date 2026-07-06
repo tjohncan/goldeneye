@@ -92,6 +92,15 @@ export const LIGHTING = {
       // Cove dome at radius 1000 — needs the long ray cap to render
       // its sky gradient through to the equator.
       maxDist: 10000,
+      // Aerial-perspective haze for cove rays that exhaust MAX_STEPS —
+      // the sub-2° grazing sliver along the sea horizon and far
+      // plateau (the tracer's distance-proportional epsilon rescues
+      // everything steeper). Black here would read as a void line
+      // between land/water and sky; haze reads as distance. Sits
+      // between the far-water tones and the horizon sky tone so both
+      // seams blend. Indoor regions keep the base black (silhouette
+      // edges want it).
+      background: [82, 122, 154],
     },
     [mousehole.REGION_MOUSEHOLE]: {
       // Light comes from the +X side (the doorway and TV are both
@@ -241,12 +250,14 @@ export const createWorld = () => {
   // 'window', and 'door' items, and the secret zones mutate them in
   // place to carve their entrances — so kitchen must come first. The
   // handles it returns are routed to each secret instead of having the
-  // secrets reach back into the scene by name.
+  // secrets reach back into the scene by name. The outside zone hands
+  // back its animated assets' update callbacks (sloop, sea creatures,
+  // zeppelin + flock) for the per-frame list below.
   bowl.addToScene(scene);
   const kitchenHandles = kitchen.addToScene(scene);
   mousehole.addToScene(scene, kitchenHandles);
   chamber.addToScene(scene, kitchenHandles);
-  outside.addToScene(scene, kitchenHandles);
+  const outsideLife = outside.addToScene(scene, kitchenHandles);
 
   // Scene-owned animators register their items into the scene before
   // first trace and expose a per-frame update; main hands those updates
@@ -264,6 +275,6 @@ export const createWorld = () => {
     speedMul,
     spawn:    SPAWN,
     teleport: TELEPORT,
-    perFrameUpdates: [bubblePump.update],
+    perFrameUpdates: [bubblePump.update, ...outsideLife.updates],
   };
 };
