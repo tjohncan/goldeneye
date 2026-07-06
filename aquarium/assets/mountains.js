@@ -152,8 +152,8 @@ const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH, tunnels }) => 
         const dy = (lpy - tn[1]) * 1.15;       // slightly squashed arch
         const dz = lpz - tn[2];
         const d2 = dx * dx + dy * dy + dz * dz;
-        if (d2 < 72) return [26, 24, 28];      // the dark bore
-        if (d2 < 116) return [96, 86, 78];     // dressed-stone ring
+        if (d2 < 256) return [26, 24, 28];     // the dark bore (r ≈ 16)
+        if (d2 < 324) return [96, 86, 78];     // dressed-stone ring
       }
     }
     const worldY = lpy + base_y + yOff;

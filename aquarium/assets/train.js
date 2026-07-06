@@ -38,33 +38,39 @@ const DEG = Math.PI / 180;
 
 const TRACK_R = 870;
 
-// Painted-arc ends (the tunnel mouths), in atan2(z, x) terms. Derived
-// from where the arc pierces each mountain's surface at train height:
-// matterhorn (center 900∠220°, bell reach ~318 at h≈23) → 240.6°;
-// mont-blanc (center 850∠307°, reach ~248) → 290.5°. In atan2 range
-// those are negative angles.
-const PORTAL_A_TH = -119.4 * DEG;             // matterhorn side
-const PORTAL_B_TH = -69.5 * DEG;              // mont-blanc side
+// Painted-arc ends (the tunnel mouths), in atan2(z, x) terms. The
+// anchor must sit ON each mountain's visible SKIN, not where the track
+// pierces deep material: a heightfield's flank at horizontal distance
+// d from its center only rises to h(d), so a mouth anchored where the
+// bore is fully swallowed (h ≈ 23) sits ~15 under the slope surface
+// and never paints. Instead anchor where the skirt stands about
+// train-height (h ≈ 11): matterhorn at d ≈ 352 → Δ22.9° off its 220°
+// bearing; mont-blanc at d ≈ 261 → Δ17.4° off 307°. The train's crown
+// briefly overtops the low outer skirt right where the dark arch is
+// painted, which reads as "entering the bore."
+const PORTAL_A_TH = -117.1 * DEG;             // matterhorn side
+const PORTAL_B_TH = -72.6 * DEG;              // mont-blanc side
 
 // Turnaround angles — deeper inside each mountain than its portal, so
-// the whole consist (≈34 long ≈ 2.2° of arc) is hidden before pausing.
+// the whole consist (≈46 long ≈ 3° of arc) is hidden before pausing.
 const TURN_A_TH = -127.5 * DEG;
 const TURN_B_TH = -62.0 * DEG;
 
 /** Tunnel-mouth world points, exported for mountains.js to paint dark
- *  arches on the right flanks. Y is mouth-center height. */
+ *  arches on the right flanks. Y sits above the rail line so most of
+ *  the mouth sphere lands on visible skin instead of below grade. */
 export const TUNNEL_PORTALS = [
-  [TRACK_R * Math.cos(PORTAL_A_TH), -7, TRACK_R * Math.sin(PORTAL_A_TH)],
-  [TRACK_R * Math.cos(PORTAL_B_TH), -7, TRACK_R * Math.sin(PORTAL_B_TH)],
+  [TRACK_R * Math.cos(PORTAL_A_TH), -5, TRACK_R * Math.sin(PORTAL_A_TH)],
+  [TRACK_R * Math.cos(PORTAL_B_TH), -5, TRACK_R * Math.sin(PORTAL_B_TH)],
 ];
 
 // Ribbon paint dimensions (radial offsets from the arc centerline).
-const RAIL_OFFSET  = 1.6;
-const RAIL_HALF_W  = 0.45;
-const TIE_HALF_R   = 2.6;
-const TIE_PERIOD   = 4.6;                     // arc-length between tie starts
-const TIE_WIDTH    = 1.5;
-const BED_HALF_R   = 3.6;
+const RAIL_OFFSET  = 2.2;
+const RAIL_HALF_W  = 0.5;
+const TIE_HALF_R   = 3.4;
+const TIE_PERIOD   = 5.6;                     // arc-length between tie starts
+const TIE_WIDTH    = 1.8;
+const BED_HALF_R   = 4.4;
 
 /**
  * Paint sample for the railway ribbon at a ground point. Returns an
@@ -106,61 +112,64 @@ const trainFrame = (sdf) => (px, py, pz) => sdf(
   px * T.sy + pz * T.cy,
 );
 
-// Locomotive, nose +Z, origin at rail-top + 5.5: frame deck, boiler,
-// cab, chimney. Wheels + livery live in the colorFn.
+// Locomotive, nose +Z, ~1.35× the first cut (it read toy-scale against
+// the house-scale village): deep frame skirt, boiler, cab, chimney.
+// Wheels + livery live in the colorFn; the frame runs deep enough that
+// the full wheel discs fit on its flanks.
 const locoShape = unionSDF(
-  translateSDF([0, -2.6, 0.0], boxSDF([2.4, 0.9, 7.0])),                       // frame
-  translateSDF([0, 0.3, 1.6], rotateXSDF(Math.PI / 2, cylinderSDF(4.6, 2.2))), // boiler
-  translateSDF([0, 0.6, -4.6], boxSDF([2.6, 2.6, 2.2])),                       // cab
-  translateSDF([0, 3.4, 4.6], cylinderSDF(1.3, 0.75)),                         // chimney
+  translateSDF([0, -3.7, 0.0], boxSDF([3.2, 2.2, 9.5])),                       // frame + skirt
+  translateSDF([0, 0.4, 2.2], rotateXSDF(Math.PI / 2, cylinderSDF(6.2, 3.0))), // boiler
+  translateSDF([0, 0.8, -6.2], boxSDF([3.5, 3.5, 3.0])),                       // cab
+  translateSDF([0, 4.6, 6.2], cylinderSDF(1.75, 1.0)),                         // chimney
 );
 
 const locoColorFn = (lpx, lpy, lpz) => {
   const bx = lpx * T.cy - lpz * T.sy;
   const bz = lpx * T.sy + lpz * T.cy;
   // Painted wheels on the frame's flanks — three per side.
-  if (Math.abs(bx) > 2.25 && lpy < -1.6) {
-    for (const wz of [3.4, 0.2, -3.0]) {
-      const dz = bz - wz, dy = lpy + 3.0;
+  if (Math.abs(bx) > 3.05 && lpy < -2.0) {
+    for (const wz of [4.6, 0.3, -4.05]) {
+      const dz = bz - wz, dy = lpy + 3.9;
       const d2 = dz * dz + dy * dy;
-      if (d2 < 0.2) return [180, 152, 64];                 // hub
-      if (d2 < 2.4) return [30, 30, 34];                   // wheel
+      if (d2 < 0.36) return [180, 152, 64];                // hub
+      if (d2 < 4.4) return [30, 30, 34];                   // wheel
     }
     return [48, 44, 42];
   }
-  if (lpy > 2.4) return [26, 26, 28];                      // chimney
-  if (bz < -2.4) {
+  if (lpy > 3.4) return [26, 26, 28];                      // chimney + cab roof
+  if (bz < -3.2) {
     // Cab — barn red with a lit window band.
-    if (lpy > 0.9 && lpy < 2.3 && Math.abs(bz + 4.6) < 1.3) return [420, 380, 240];
+    if (lpy > 1.2 && lpy < 3.1 && Math.abs(bz + 6.2) < 1.8) return [420, 380, 240];
     return [138, 52, 40];
   }
-  if (bz > 5.4) return [30, 30, 32];                       // smokebox door
-  if (Math.abs(bz - 2.2) < 0.25) return [180, 152, 64];    // brass boiler band
-  if (lpy > -1.7) return [44, 58, 52];                     // boiler green-black
+  if (bz > 7.3) return [30, 30, 32];                       // smokebox door
+  if (Math.abs(bz - 3.0) < 0.34) return [180, 152, 64];    // brass boiler band
+  if (lpy > -2.3) return [44, 58, 52];                     // boiler green-black
   return [40, 38, 40];                                     // frame
 };
 
 // Two freight wagons as one rigid Item (see header on why that's
-// safe), centered between them; oxide-red slats, painted wheels.
+// safe), centered between them; oxide-red slats, painted wheels on
+// bodies deep enough to carry them.
 const wagonsShape = unionSDF(
-  translateSDF([0, -1.2, +6.9], boxSDF([2.3, 2.0, 5.4])),
-  translateSDF([0, -1.2, -6.9], boxSDF([2.3, 2.0, 5.4])),
+  translateSDF([0, -2.3, +9.3], boxSDF([3.1, 3.3, 7.3])),
+  translateSDF([0, -2.3, -9.3], boxSDF([3.1, 3.3, 7.3])),
 );
 
 const wagonsColorFn = (lpx, lpy, lpz) => {
   const bx = lpx * T.cy - lpz * T.sy;
   const bz = lpx * T.sy + lpz * T.cy;
-  if (Math.abs(bx) > 2.15 && lpy < -1.9) {
-    for (const wz of [9.5, 4.3, -4.3, -9.5]) {
-      const dz = bz - wz, dy = lpy + 3.0;
+  if (Math.abs(bx) > 2.95 && lpy < -2.4) {
+    for (const wz of [12.8, 5.8, -5.8, -12.8]) {
+      const dz = bz - wz, dy = lpy + 3.85;
       const d2 = dz * dz + dy * dy;
-      if (d2 < 0.16) return [170, 144, 60];
-      if (d2 < 1.9) return [30, 30, 34];
+      if (d2 < 0.3) return [170, 144, 60];
+      if (d2 < 3.3) return [30, 30, 34];
     }
     return [46, 42, 40];
   }
-  if (lpy > 0.55) return [96, 44, 34];                     // wagon roofline
-  const slat = Math.floor(bz * 2.0) & 1;
+  if (lpy > 0.7) return [96, 44, 34];                      // wagon roofline
+  const slat = Math.floor(bz * 1.5) & 1;
   return slat === 0 ? [128, 58, 44] : [110, 48, 38];
 };
 
@@ -194,7 +203,9 @@ const smokeSdf = (px, py, pz) => {
  * @returns {{ update: (timeMs: number) => void }}
  */
 export const addToScene = (add, { plateauY }) => {
-  const RAIL_TOP_Y = plateauY + 5.5;          // item origin height over the rails
+  // Item origin height: sets painted wheel-bottoms (local -5.8) a hair
+  // INTO the ballast rather than hovering over it.
+  const RAIL_TOP_Y = plateauY + 5.65;
 
   const loco = add({
     name:     'cove-train-loco',
@@ -202,7 +213,9 @@ export const addToScene = (add, { plateauY }) => {
     colorFn:  locoColorFn,
     position: [TUNNEL_PORTALS[0][0], RAIL_TOP_Y, TUNNEL_PORTALS[0][2]],
     sdf:      trainFrame(locoShape),
-    boundingBox: [7.5, 4.9, 7.5],
+    // Frame corner (3.2, 9.5) sweeps to √(3.2² + 9.5²) ≈ 10.02 at a
+    // diagonal yaw.
+    boundingBox: [10.2, 6.6, 10.2],
   });
   const wagons = add({
     name:     'cove-train-cars',
@@ -210,16 +223,16 @@ export const addToScene = (add, { plateauY }) => {
     colorFn:  wagonsColorFn,
     position: [TUNNEL_PORTALS[0][0], RAIL_TOP_Y, TUNNEL_PORTALS[0][2]],
     sdf:      trainFrame(wagonsShape),
-    boundingBox: [12.6, 3.4, 12.6],
+    boundingBox: [17.0, 5.8, 17.0],
   });
   const smoke = add({
     name:     'cove-train-smoke',
     color:    [214, 214, 218],
-    position: [TUNNEL_PORTALS[0][0], RAIL_TOP_Y + 8, TUNNEL_PORTALS[0][2]],
+    position: [TUNNEL_PORTALS[0][0], RAIL_TOP_Y + 10, TUNNEL_PORTALS[0][2]],
     sdf:      smokeSdf,
     opacity:  0.5,
     collides: false,
-    boundingBox: [6.0, 7.0, 6.0],
+    boundingBox: [7.0, 8.5, 7.0],
   });
 
   return {
@@ -253,24 +266,24 @@ export const addToScene = (add, { plateauY }) => {
       loco.position[2] = lz;
       // Wagons trail the loco along the tangent (rigid consist).
       const tanX = Math.sin(heading), tanZ = Math.cos(heading);
-      wagons.position[0] = lx - tanX * 21.1;
-      wagons.position[2] = lz - tanZ * 21.1;
+      wagons.position[0] = lx - tanX * 28.5;
+      wagons.position[2] = lz - tanZ * 28.5;
 
       // Smoke rides above the chimney while running; parked invisible
       // during mountain pauses (dropped at the tracer's pack step).
       smoke.invisible = !moving;
       if (moving) {
-        smoke.position[0] = lx + tanX * 4.6;
-        smoke.position[1] = RAIL_TOP_Y + 8;
-        smoke.position[2] = lz + tanZ * 4.6;
+        smoke.position[0] = lx + tanX * 6.2;
+        smoke.position[1] = RAIL_TOP_Y + 10;
+        smoke.position[2] = lz + tanZ * 6.2;
         const ts = timeMs / 1000;
         for (let i = 0; i < 3; i++) {
           const age = ((ts * 0.5 + i / 3) % 1 + 1) % 1;
           const p = _puffs[i];
-          p.x = Math.sin(age * 7 + i * 2.1) * 0.8 - tanX * age * 4.5;
-          p.y = age * 8 - 4;
-          p.z = Math.cos(age * 5 + i * 1.3) * 0.8 - tanZ * age * 4.5;
-          p.r = 0.4 + Math.sin(age * Math.PI) * 1.5;
+          p.x = Math.sin(age * 7 + i * 2.1) * 1.0 - tanX * age * 5.5;
+          p.y = age * 10 - 5;
+          p.z = Math.cos(age * 5 + i * 1.3) * 1.0 - tanZ * age * 5.5;
+          p.r = 0.5 + Math.sin(age * Math.PI) * 2.0;
         }
       }
     },
