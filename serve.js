@@ -22,7 +22,10 @@ const MIME = {
 };
 
 createServer(async (req, res) => {
-  const url  = req.url === '/' ? '/index.html' : req.url.split('?')[0];
+  // Strip the query BEFORE the root check — '/?res=128' must serve
+  // index.html, not 404 on a directory read.
+  const bare = req.url.split('?')[0];
+  const url  = bare === '/' ? '/index.html' : bare;
   const path = normalize(join(ROOT, url));
   if (!path.startsWith(ROOT + sep) && path !== ROOT) {
     res.writeHead(403); return res.end('forbidden');
