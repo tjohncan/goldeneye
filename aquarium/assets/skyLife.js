@@ -9,15 +9,25 @@
 // form), so it needs no steering state. The sky-goldfish are a tiny
 // per-slot state machine instead:
 //
-//   CRUISE — fly waypoint to waypoint in a high band that clears every
-//            rooftop, treetop, and the mesa (so straight-line legs can
-//            never pass through geometry);
-//   STAGE  — descend to a perch's staging point (perch + its approach
-//            offset, always in open air);
-//   FINAL  — short slow glide from staging point onto the perch;
-//   SIT    — perch a while (roof ridges, treetops, the lighthouse
-//            gallery, the dock end, the mesa rim, the shack's outside
-//            doorknob), then launch back along the approach corridor.
+//   CRUISE   — fly waypoint to waypoint in a high band that clears
+//              every rooftop, treetop, and the mesa (so straight legs
+//              can never pass through geometry);
+//   OVERHEAD — travel AT cruise altitude to the point directly above
+//              the chosen perch's staging point;
+//   STAGE    — descend the vertical column to the staging point
+//              (perch + its approach offset, always open air);
+//   FINAL    — short slow glide from staging point onto the perch;
+//   SIT      — perch a while (roof ridges, treetops, the lighthouse
+//              gallery, the dock end, the mesa rim, the shack's
+//              outside doorknob);
+//   DEPART   — launch back out to the staging point;
+//   CLIMB    — ride the column back up to the cruise band.
+//
+// The OVERHEAD/CLIMB legs are what keep beaks out of buildings: a
+// diagonal line from a rooftop to a far waypoint can pass through
+// whatever stands in between (the shack, mostly), but travel-high +
+// vertical-columns can't — every column top is open sky and every
+// column base is a hand-picked staging point.
 //
 // Steering is exponential velocity easing toward the current target —
 // no waypoint lists to allocate, no pathfinding. Perch occupancy is a
@@ -136,7 +146,8 @@ const CRUISE_SPEED = 16;
 const FINAL_SPEED  = 3.5;
 const STEER_TAU    = 0.7;
 
-const MODE_CRUISE = 0, MODE_STAGE = 1, MODE_FINAL = 2, MODE_SIT = 3;
+const MODE_CRUISE = 0, MODE_OVERHEAD = 1, MODE_STAGE = 2, MODE_FINAL = 3,
+      MODE_SIT = 4, MODE_DEPART = 5, MODE_CLIMB = 6;
 
 // Fish body — one sphere + tail; each fish SDF stays 2 primitives.
 // Tail trimmed toward a compact triangle-read (was a taller "flowing
@@ -227,9 +238,11 @@ export const addToScene = (add, { perches }) => {
     poses.push(P);
     const f = {
       mode: MODE_CRUISE,
-      x: 0, y: 70, z: 0,
+      x: 0, y: 90, z: 0,
       vx: 0, vy: 0, vz: 0,
-      tx: 0, ty: 70, tz: 0,
+      tx: 0, ty: 90, tz: 0,
+      sx: 0, sy: 0, sz: 0,       // staging point of the claimed perch
+      oy: 0,                     // column-top altitude over the staging point
       perchIdx: -1,
       sitUntil: 0,
       item: null,
@@ -290,7 +303,8 @@ export const addToScene = (add, { perches }) => {
         const P = poses[i];
 
         if (f.mode === MODE_SIT) {
-          // Breathe in place; launch along the approach corridor when done.
+          // Breathe in place; launch back toward the staging point when
+          // done (the corridor in, reversed).
           f.item.position[1] = f.y + 0.06 * Math.sin(t * 3 + i);
           if (t >= f.sitUntil) {
             const p = perches[f.perchIdx];
@@ -298,10 +312,8 @@ export const addToScene = (add, { perches }) => {
             f.vx = (p.ax / alen) * 10;
             f.vy = (p.ay / alen) * 10;
             f.vz = (p.az / alen) * 10;
-            perchOwner[f.perchIdx] = -1;
-            f.perchIdx = -1;
-            f.mode = MODE_CRUISE;
-            randomWaypoint(f);
+            f.tx = f.sx; f.ty = f.sy; f.tz = f.sz;
+            f.mode = MODE_DEPART;
           }
           continue;
         }
@@ -310,18 +322,24 @@ export const addToScene = (add, { perches }) => {
         const dx = f.tx - f.x, dy = f.ty - f.y, dz = f.tz - f.z;
         const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-        // Mode transitions on arrival.
+        // Mode transitions on arrival. The perch pattern is a box:
+        // travel high, drop down the column, glide on; reverse to leave.
         if (f.mode === MODE_CRUISE && dist < 12) {
           const idx = Math.random() < 0.45 ? claimPerch(i) : -1;
           if (idx >= 0) {
             const p = perches[idx];
             f.perchIdx = idx;
-            f.tx = p.x + p.ax; f.ty = p.y + p.ay; f.tz = p.z + p.az;
-            f.mode = MODE_STAGE;
+            f.sx = p.x + p.ax; f.sy = p.y + p.ay; f.sz = p.z + p.az;
+            f.oy = Math.max(CRUISE_Y_MIN + 5, f.sy + 4);
+            f.tx = f.sx; f.ty = f.oy; f.tz = f.sz;
+            f.mode = MODE_OVERHEAD;
           } else {
             randomWaypoint(f);
           }
-        } else if (f.mode === MODE_STAGE && dist < 4) {
+        } else if (f.mode === MODE_OVERHEAD && dist < 6) {
+          f.tx = f.sx; f.ty = f.sy; f.tz = f.sz;
+          f.mode = MODE_STAGE;
+        } else if (f.mode === MODE_STAGE && dist < 3) {
           const p = perches[f.perchIdx];
           f.tx = p.x; f.ty = p.y; f.tz = p.z;
           f.mode = MODE_FINAL;
@@ -337,13 +355,22 @@ export const addToScene = (add, { perches }) => {
           f.mode = MODE_SIT;
           f.sitUntil = t + 6 + Math.random() * 14;
           continue;
+        } else if (f.mode === MODE_DEPART && dist < 3) {
+          perchOwner[f.perchIdx] = -1;
+          f.perchIdx = -1;
+          f.tx = f.sx; f.ty = f.oy; f.tz = f.sz;
+          f.mode = MODE_CLIMB;
+        } else if (f.mode === MODE_CLIMB && dist < 6) {
+          f.mode = MODE_CRUISE;
+          randomWaypoint(f);
         }
 
         // Steer: ease velocity toward the target direction. FINAL slows
-        // to a glide so the touchdown doesn't overshoot.
+        // to a glide so the touchdown doesn't overshoot; the column legs
+        // fly a touch under cruise so the corners stay tight.
         const speed = f.mode === MODE_FINAL
           ? Math.max(FINAL_SPEED, Math.min(CRUISE_SPEED, dist * 1.2))
-          : CRUISE_SPEED;
+          : (f.mode === MODE_STAGE || f.mode === MODE_DEPART) ? 11 : CRUISE_SPEED;
         if (dist > 1e-6) {
           const inv = speed / dist;
           f.vx += (dx * inv - f.vx) * ease;
