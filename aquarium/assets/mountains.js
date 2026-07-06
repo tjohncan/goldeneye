@@ -171,7 +171,7 @@ const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH, tunnels }) => 
         const v = dz * tn[3] - dx * tn[4];     // across it
         const ay = lpy - tn[1] + 8;            // 0 at the rail base
         if (ay > -1.5) {
-          const dome = ay > 6 ? (ay - 6) * 1.35 : 0;
+          const dome = ay > 8 ? (ay - 8) * 1.15 : 0;   // crown ≈ 21 over the rails
           const p2 = v * v + u * u * 0.27 + dome * dome;
           if (p2 < 225) return [26, 24, 28];   // the dark bore
           if (p2 < 342) return [96, 86, 78];   // dressed-stone ring
