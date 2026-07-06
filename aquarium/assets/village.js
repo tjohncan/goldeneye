@@ -232,14 +232,27 @@ const lighthouseSdf = unionSDF(
   translateSDF([0, +37.0, 0], sphereSDF(5.9)),                        // dome cap
 );
 
+// Livery: old-world whitewashed stone rather than candy stripes —
+// warm white shaft (over-bright ~1.7×; a vertical cylinder under a
+// straight-up sun shades ambient-only), faint weathering, a stone
+// plinth, a cornice under the gallery, narrow window slits climbing
+// the inland face, wrought-iron gallery, and a verdigris copper dome.
 const lighthouseColorFn = (lpx, lpy, lpz) => {
-  if (lpy > +34.9) return [150, 45, 40];                    // dome cap
+  if (lpy > +34.9) return [128, 205, 172];                  // copper dome, patina
   if (lpy > +28.8) return [660, 610, 390];                  // lamp room — over-bright
-  if (lpy > +26.6) return [58, 54, 58];                     // gallery ring
+  if (lpy > +26.6) return [58, 54, 58];                     // wrought-iron gallery
+  if (lpy > +25.2) return [318, 306, 288];                  // cornice course
   // Door at the tower base, facing inland (-Z side).
   if (lpy < -36.6 && lpz < -4.3 && Math.abs(lpx) < 2.6) return [70, 50, 34];
-  const band = Math.floor((lpy + LH_HALF_Y) / 8.6) & 1;     // tower stripes
-  return band === 0 ? [385, 119, 94] : [439, 432, 414];
+  if (lpy < -36.0) return [300, 290, 274];                  // stone plinth
+  // Window slits climbing the inland face.
+  if (lpz < -3.0 && Math.abs(lpx) < 1.2) {
+    if (Math.abs(lpy + 22) < 2.4 || Math.abs(lpy + 6) < 2.4 ||
+        Math.abs(lpy - 10) < 2.4) return [42, 40, 46];
+  }
+  // Whitewashed shaft with faint weathering drift.
+  const wear = Math.sin(lpy * 0.5) * 6 + Math.sin(lpx * 0.8 + lpz * 0.6) * 5;
+  return [408 + wear, 398 + wear, 380 + wear];
 };
 
 
@@ -382,11 +395,27 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
   const LH_X = 150, LH_Z = -12;
   add({
     name:     'village-lighthouse',
-    color:    [385, 119, 94],
+    color:    [408, 398, 380],
     colorFn:  lighthouseColorFn,
     position: [LH_X, LH_POS_Y, LH_Z],
     sdf:      lighthouseSdf,
     boundingBox: [LH_GALLERY_R + 0.2, LH_HALF_Y + 0.2, LH_GALLERY_R + 0.2],
+  });
+  // Top-assembly physics pad: the gallery disc is 2 thin and the
+  // lamp/cap junction is grazeable — a boosted fish could clip in near
+  // the top at the right angle. One invisible solid (tracer drops it
+  // at pack time) makes the whole crown a convex blocker; the gallery
+  // rim stays a legal LANDING spot since sky-goldfish are scripted,
+  // not physical.
+  add({
+    name:      'lighthouse-crown-pad',
+    color:     [0, 0, 0],
+    position:  [LH_X, LH_POS_Y, LH_Z],
+    sdf:       unionSDF(
+      translateSDF([0, +27.8, 0], cylinderSDF(1.8, LH_GALLERY_R + 0.2)),
+      translateSDF([0, +35.0, 0], cylinderSDF(8.2, 7.0)),
+    ),
+    invisible: true,
   });
   // Gallery-rim perch facing the water; cap-top perch facing home.
   perches.push({ x: LH_X, y: LH_POS_Y + 29.2, z: LH_Z + LH_GALLERY_R - 0.8,
