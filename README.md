@@ -44,6 +44,8 @@ node serve.js
     - `secrets/` — additional *hidden locales* to hunt
   - `assets/` — separate content modules for complex items
     - `bubblePump.js` — pool of rising bubbles
+    - ... plus the modules certain *hidden locales* draw their scenery
+      and wildlife from (no spoilers in a README)
   - `controls.js` — pointer-based 3D swimming
   - `physics.js` — SDF-gradient collision sliding
   - `fpsThrottle.js` — render-loop FPS cap
