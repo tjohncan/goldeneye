@@ -87,11 +87,16 @@ const montBlancPeaks = (h, baseR) => [
 // incoming midpoint-relative lpy to base-relative before applying the
 // shape logic.
 //
-// SDF scale 0.30 — heightfield gradient up to ~peakH/baseR (~3 for
-// big mountains) plus low-frequency noise (~0.3). Conservative
-// enough to keep the marcher from overshooting at sharp peaks.
-const makeMountainSdf = ({ peaks, noiseSeed, peakH }) => {
-  const yOff = peakH / 2;
+// SDF scale defaults to 0.30 — heightfield gradient up to ~peakH/baseR
+// (~3 for big mountains) plus low-frequency noise (~0.3). Conservative
+// enough to keep the marcher from overshooting at sharp peaks. Gentler
+// mountains may pass `sdfScale` to march faster: the mesa's conic
+// sides peak at slope ~1.5 (noise included), Lipschitz-safe up to
+// ~0.55 — creeping at 0.30 made rays grazing its flanks exhaust the
+// step budget and halo the silhouette.
+const makeMountainSdf = ({ peaks, noiseSeed, peakH, sdfScale }) => {
+  const yOff  = peakH / 2;
+  const scale = sdfScale ?? 0.30;
   return (lpx, lpy, lpz) => {
     const lpyBase = lpy + yOff;
     let surfaceMax = 0;
@@ -123,9 +128,9 @@ const makeMountainSdf = ({ peaks, noiseSeed, peakH }) => {
         Math.sin(lpx * 0.080 + noiseSeed * 1.3) * Math.cos(lpz * 0.075 + noiseSeed * 0.8) * 0.4
       ) * 4;
       const surfaceH = surfaceMax + noise;
-      return Math.max(lpyBase - surfaceH, -lpyBase) * 0.30;
+      return Math.max(lpyBase - surfaceH, -lpyBase) * scale;
     }
-    return Math.sqrt(minRimDist * minRimDist + lpyBase * lpyBase) * 0.30;
+    return Math.sqrt(minRimDist * minRimDist + lpyBase * lpyBase) * scale;
   };
 };
 
@@ -210,7 +215,7 @@ export const addToScene = (add, { plateauY }) => {
     // under TREE_LINE_Y so it stays all-green.
     {
       angle: MESA_ANGLE, hd: MESA_HD, baseR: MESA_SUB_R, base_y: plateauY,
-      peakH: MESA_H, hasSnow: false, noiseSeed: MESA_SEED,
+      peakH: MESA_H, hasSnow: false, noiseSeed: MESA_SEED, sdfScale: 0.5,
       peaks: [
         { ox: 0, oz: 0, h: MESA_H, subR: MESA_SUB_R, sharp: 1.0, flat: MESA_FLAT },
       ],

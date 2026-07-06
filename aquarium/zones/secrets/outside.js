@@ -920,20 +920,27 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
 
   // Ground base curve — heightfield with a +Z-hemisphere beach slope
   // and a flat -Z-hemisphere plateau (mountains will rise from the
-  // plateau as separate items). * 0.6 keeps the SDF conservative for
-  // the marcher (beach slope's max grad ≈ (PLATEAU_Y - SEA_FLOOR_Y) /
-  // (BEACH_END_R - PLATEAU_R) ≈ 37/100 = 0.37; safety factor 0.6 sits
-  // well under 1/sqrt(1 + 0.37²) ≈ 0.94).
+  // plateau as separate items).
   //
-  // Short-circuit for points well above the plateau: groundHeight never
-  // exceeds SHACK_PLATEAU_Y (the +Z hemisphere slopes DOWN to seafloor;
-  // the -Z hemisphere is plateau-flat). Sky-bound rays read this branch
-  // and skip the sqrt + smoothstep entirely. The +5 buffer keeps the
-  // shortcut SDF >= the true SDF at the boundary so the marcher never
-  // overshoots — the 0.6 multiplier already provides Lipschitz slack.
+  // Above-plateau branch is EXACT (scale 1): every surface point sits
+  // at y ≤ SHACK_PLATEAU_Y (the +Z hemisphere only slopes DOWN), so a
+  // point h above the plateau is at least h from ALL ground — vertical
+  // separation alone is a true lower bound, never an overestimate.
+  // This matters for grazing rays crossing the plateau toward the
+  // mountains: at the old 0.6 scale they crept and exhausted the step
+  // budget, leaking a background-colored band along the land horizon.
+  // The +5 buffer is LOAD-BEARING for hits, not just slack: without
+  // it, a ray crossing the plateau's y-level out over the +Z sea would
+  // read SDF ≈ 0 and phantom-hit mid-air where no ground exists — the
+  // buffer hands the last 5 units of approach to the true heightfield.
+  //
+  // Below-plateau branch scales by 0.8: the steepest heightfield
+  // gradient is the beach smoothstep's peak 1.5·37/100 ≈ 0.56 (the
+  // deep-sea ramp is gentler), giving a Lipschitz-safe bound of
+  // 1/sqrt(1 + 0.56²) ≈ 0.87; 0.8 keeps margin.
   const groundSdf = (px, py, pz) => {
-    if (py > SHACK_PLATEAU_Y + 5) return (py - SHACK_PLATEAU_Y) * 0.6;
-    return (py - groundHeight(px, pz)) * 0.6;
+    if (py > SHACK_PLATEAU_Y + 5) return py - SHACK_PLATEAU_Y;
+    return (py - groundHeight(px, pz)) * 0.8;
   };
   add({
     name:     'outside-ground',
