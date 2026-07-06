@@ -52,10 +52,10 @@ import {
 // Circuit: radius 430 around the world origin — crossing over water,
 // beach, village, and mesa alike ("around a cross-section of the
 // bowl") — at y ≈ 185: above the mesa, below the snow line, framed
-// against the big mountains' rocky midriffs. One lap every 4 minutes.
+// against the big mountains' rocky midriffs. One lap every 5 minutes.
 const ZEP_R      = 430;
 const ZEP_BASE_Y = 185;
-const ZEP_OMEGA  = 2 * Math.PI / 240;
+const ZEP_OMEGA  = 2 * Math.PI / 300;         // 5 min a lap — catchable
 
 const ZEP = { cy: 1, sy: 0 };                 // yaw-only pose
 
@@ -142,8 +142,8 @@ const FISH_COUNT = 13;
 // descend below it, along per-perch corridors chosen to be open air.
 const CRUISE_Y_MIN = 80, CRUISE_Y_MAX = 125;
 const CRUISE_R_MIN = 60, CRUISE_R_MAX = 320;
-const CRUISE_SPEED = 16;
-const FINAL_SPEED  = 3.5;
+const CRUISE_SPEED = 12.5;    // a touch under the player’s pace — chaseable
+const FINAL_SPEED  = 3.0;
 const STEER_TAU    = 0.7;
 
 const MODE_CRUISE = 0, MODE_OVERHEAD = 1, MODE_STAGE = 2, MODE_FINAL = 3,
@@ -353,7 +353,7 @@ export const addToScene = (add, { perches }) => {
           f.item.position[1] = p.y;
           f.item.position[2] = p.z;
           f.mode = MODE_SIT;
-          f.sitUntil = t + 6 + Math.random() * 14;
+          f.sitUntil = t + 8 + Math.random() * 16;
           continue;
         } else if (f.mode === MODE_DEPART && dist < 3) {
           perchOwner[f.perchIdx] = -1;
@@ -370,7 +370,7 @@ export const addToScene = (add, { perches }) => {
         // fly a touch under cruise so the corners stay tight.
         const speed = f.mode === MODE_FINAL
           ? Math.max(FINAL_SPEED, Math.min(CRUISE_SPEED, dist * 1.2))
-          : (f.mode === MODE_STAGE || f.mode === MODE_DEPART) ? 11 : CRUISE_SPEED;
+          : (f.mode === MODE_STAGE || f.mode === MODE_DEPART) ? 9 : CRUISE_SPEED;
         if (dist > 1e-6) {
           const inv = speed / dist;
           f.vx += (dx * inv - f.vx) * ease;

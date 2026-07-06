@@ -70,16 +70,19 @@ const hullShape = smoothUnionSDF(0.65,
 // rig registers as its own Item positioned RIG_DY above the hull so
 // its AABB hugs the sail instead of spanning keel-to-masthead.
 const RIG_DY = 11;
+// Boom + sail-foot ride ABOVE the cabin top (5.2) — the first rig had
+// the sail's lower edge passing through the cabin roof, which read as
+// white canvas poking out of the woodwork astern.
 const sailLeechPlane = (() => {
-  // Leech runs masthead (y 20.3, z +0.9) → boom end (y 4.3, z -7.7).
-  const inv = 1 / Math.hypot(16.0, 8.6);
-  return planeSDF([0, 8.6 * inv, -16.0 * inv], (8.6 * 20.3 - 16.0 * 0.9) * inv);
+  // Leech runs masthead (y 20.3, z +0.9) → boom end (y 5.9, z -7.7).
+  const inv = 1 / Math.hypot(14.4, 8.6);
+  return planeSDF([0, 8.6 * inv, -14.4 * inv], (8.6 * 20.3 - 14.4 * 0.9) * inv);
 })();
 const rigShape = unionSDF(
   translateSDF([0, 11.30, +1.10], cylinderSDF(9.6, 0.30)),                    // mast
-  translateSDF([0, 3.90, -3.70], rotateXSDF(Math.PI / 2, cylinderSDF(4.8, 0.19))), // boom
+  translateSDF([0, 5.60, -3.70], rotateXSDF(Math.PI / 2, cylinderSDF(4.8, 0.19))), // boom
   intersectionSDF(
-    translateSDF([0, 12.30, -3.40], boxSDF([0.10, 8.0, 4.3])),
+    translateSDF([0, 13.10, -3.40], boxSDF([0.10, 7.2, 4.3])),
     sailLeechPlane,
   ),
   translateSDF([0, 21.30, -0.20], boxSDF([0.06, 0.46, 0.93])),               // pennant
@@ -112,7 +115,7 @@ const hullColorFn = (lpx, lpy, lpz) => {
 const rigColorFn = (lpx, lpy, lpz) => {
   const bz = lpx * S.sy + lpz * S.cy;
   if (lpy > 9.6) return [350, 98, 82];                       // pennant
-  if (bz > 0.9 || lpy < -6.6) return [122, 92, 60];          // mast / boom wood
+  if (bz > 0.9 || lpy < -5.15) return [122, 92, 60];         // mast / boom wood
   const seam = Math.floor(lpy / 2.0) & 1;                    // sail cloth seams
   return seam === 0 ? [424, 420, 408] : [399, 395, 381];
 };
@@ -136,8 +139,10 @@ const buoyColorFn = (lpx, lpy, lpz) => {
 
 // ─────────────────────────── behavior ───────────────────────────
 
-const CRUISE_SPEED   = 6;        // world units / sec
-const TURN_RATE      = 0.22;     // max rad / sec
+// Tuned a touch DOWN across the cove's movers: the player should be
+// able to chase anything down for a close look.
+const CRUISE_SPEED   = 4.5;      // world units / sec
+const TURN_RATE      = 0.18;     // max rad / sec
 const HOME           = { x: 40, z: 330 };
 const CRUISE_RANGE   = 190;      // heading stays free within this radius of HOME
 
@@ -180,7 +185,7 @@ export const addToScene = (add, { seaLevelY }) => {
   // the sail feel like fabric you thump into. Mast/boom stay thin —
   // clipping past a pole reads fine; a wall shouldn't.
   const framedSailPad = boatFrame(
-    translateSDF([0, 12.30, -3.40], boxSDF([1.0, 8.0, 4.3])),
+    translateSDF([0, 13.10, -3.40], boxSDF([1.0, 7.2, 4.3])),
   );
   const sailPad = add({
     name:      'sloop-sail-pad',

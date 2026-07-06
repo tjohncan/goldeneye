@@ -2,10 +2,10 @@
 // that cruises a wide deep circuit and surfaces on a slow breath
 // cycle (dorsal fin + back breaking the waves before sounding again),
 // a reef shark tracing tighter, shallower laps whose raked fin slices
-// above the surface at the crest of each pass, and an octopus walking
-// a slow patrol around its seafloor den — directly beneath the
-// shark's ring, which passes within a body-length of it. Drama, free
-// of charge.
+// above the surface at the crest of each pass, and an octopus drifting
+// a slow patrol a body-height above its seafloor den — directly
+// beneath the shark's ring, which passes within a body-length of it.
+// Drama, free of charge.
 //
 // Both swim ANALYTIC paths — position is a closed-form function of
 // time (circle with slowly-breathing radius + sinusoidal depth), so
@@ -91,7 +91,10 @@ const SHARK = makePose(0);
 
 const sharkShape = unionSDF(
   smoothUnionSDF(0.5,
-    capsuleBetweenSDF([0, 0, -4.2], [0, 0, 4.2], 1.55),
+    // Two body segments taper the rear toward the peduncle instead of
+    // running a constant-radius tube nose to tail.
+    capsuleBetweenSDF([0, 0, -1.2], [0, 0, 4.2], 1.55),
+    capsuleBetweenSDF([0, 0.15, -5.4], [0, 0, -1.2], 0.9),
     translateSDF([0, -0.1, 5.5], sphereSDF(1.15)),
   ),
   translateSDF([0, 2.6, 0.2], rotateXSDF(-0.5, boxSDF([0.16, 1.5, 1.0]))),  // raked dorsal
@@ -182,34 +185,37 @@ const pathAt = (c, t) => {
   return _pos;
 };
 
-// Orca: wide deep laps mid-cove, ~95 s per revolution. Depth cycle
+// All circuits tuned a touch SLOW of the first draft — the player
+// should be able to chase anything down for a close look.
+
+// Orca: wide deep laps mid-cove, ~2 min per revolution. Depth cycle
 // crests at -29 — back + dorsal above the waterline — and sounds to
 // -141. Path stays over water deeper than the body everywhere.
 const ORCA_PATH = {
   cx: 0, cz: 350, baseR: 170, rAmp: 25, rFreq: 0.021, rPhase: 1.0,
-  angSpeed: 2 * Math.PI / 95, phi0: 0,
-  baseY: -85, yAmp: 56, yFreq: 0.11, yPhase: 0,
+  angSpeed: 2 * Math.PI / 125, phi0: 0,
+  baseY: -85, yAmp: 56, yFreq: 0.085, yPhase: 0,
 };
 const ORCA_PITCH_MAX = 0.25;
 
-// Shark: tighter, faster, shallow — fin tip clears the surface by ~1.8
-// at each depth crest, classic silhouette from the dock.
+// Shark: tighter, quicker than the orca, shallow — fin tip clears the
+// surface by ~1.8 at each depth crest, classic silhouette from the dock.
 const SHARK_PATH = {
   cx: 85, cz: 235, baseR: 75, rAmp: 18, rFreq: 0.033, rPhase: 2.0,
-  angSpeed: 2 * Math.PI / 42, phi0: 2.1,
-  baseY: -29.5, yAmp: 2.2, yFreq: 0.9, yPhase: 0.7,
+  angSpeed: 2 * Math.PI / 56, phi0: 2.1,
+  baseY: -29.5, yAmp: 2.2, yFreq: 0.7, yPhase: 0.7,
 };
 const SHARK_PITCH_MAX = 0.20;
 
-// Octopus: a slow walk around its den on the shallow seafloor —
-// 70 s a lap, arms brushing the sand (floor there runs -57.7..-60.2;
-// arm tips reach -60.8, so the deep-side steps bury slightly — sand).
+// Octopus: floating a body-height off the seafloor now (buried-in-the-
+// sand was the first draft; a drifting hover reads better and shows
+// off the arms), riding a gentle vertical breath around its den.
 const OCTO_PATH = {
   cx: 110, cz: 200, baseR: 13, rAmp: 2, rFreq: 0.02, rPhase: 0,
-  angSpeed: 2 * Math.PI / 70, phi0: 1.0,
-  baseY: -54.4, yAmp: 0.5, yFreq: 0.45, yPhase: 0,
+  angSpeed: 2 * Math.PI / 95, phi0: 1.0,
+  baseY: -47.5, yAmp: 2.2, yFreq: 0.3, yPhase: 0,
 };
-const OCTO_PITCH_MAX = 0.10;
+const OCTO_PITCH_MAX = 0.12;
 
 // Update one creature: move to the path point, derive yaw/pitch from
 // the position delta, write pose trig + item position.
