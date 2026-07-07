@@ -215,12 +215,14 @@ const ORCA_PATH = {
 };
 const ORCA_PITCH_MAX = 0.25;
 
-// Shark: tighter, quicker than the orca, shallow — fin tip clears the
-// surface by ~1.8 at each depth crest, classic silhouette from the dock.
+// Shark: tighter, quicker than the orca, shallow. Crest raised ~0.5 so
+// the raked dorsal cuts a decisive ~2.5 above the surface (was reading
+// as a marginal breach) — the back's top still sits 0.25 UNDER at
+// crest, so it's a fin slicing the water, not a surfboarding hull.
 const SHARK_PATH = {
   cx: 85, cz: 235, baseR: 75, rAmp: 18, rFreq: 0.033, rPhase: 2.0,
   angSpeed: 2 * Math.PI / 56, phi0: 2.1,
-  baseY: -29.5, yAmp: 2.2, yFreq: 0.7, yPhase: 0.7,
+  baseY: -29.0, yAmp: 2.2, yFreq: 0.7, yPhase: 0.7,
 };
 const SHARK_PITCH_MAX = 0.20;
 

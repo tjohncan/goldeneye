@@ -154,10 +154,15 @@ const locoColorFn = (lpx, lpy, lpz) => {
 
 // Two freight wagons as one rigid Item (see header on why that's
 // safe), centered between them; oxide-red slats, painted wheels on
-// bodies deep enough to carry them.
+// bodies deep enough to carry them. Two low drawbars bridge the gaps
+// (wagon→loco ahead, wagon→wagon between) so the consist reads as
+// coupled rather than floating apart — the forward bar reaches toward
+// the loco's separate Item, which trails at the same fixed offset.
 const wagonsShape = unionSDF(
   translateSDF([0, -2.3, +9.3], boxSDF([3.1, 3.3, 7.3])),
   translateSDF([0, -2.3, -9.3], boxSDF([3.1, 3.3, 7.3])),
+  translateSDF([0, -2.5, +17.8], boxSDF([0.32, 0.32, 1.5])),   // drawbar → loco
+  translateSDF([0, -2.5, 0.0],   boxSDF([0.32, 0.32, 2.3])),   // drawbar wagon↔wagon
 );
 
 const wagonsColorFn = (lpx, lpy, lpz) => {
@@ -172,6 +177,9 @@ const wagonsColorFn = (lpx, lpy, lpz) => {
     }
     return [46, 42, 40];
   }
+  // Drawbars — dark iron, isolated to the inter-body gaps at axle height.
+  if (Math.abs(bx) < 0.5 && lpy < -2.0 && lpy > -3.0
+      && (bz > 16.7 || Math.abs(bz) < 2.1)) return [42, 40, 44];
   if (lpy > 0.7) return [96, 44, 34];                      // wagon roofline
   const slat = Math.floor(bz * 1.5) & 1;
   return slat === 0 ? [128, 58, 44] : [110, 48, 38];
@@ -227,7 +235,9 @@ export const addToScene = (add, { plateauY }) => {
     colorFn:  wagonsColorFn,
     position: [TUNNEL_PORTALS[0][0], RAIL_TOP_Y, TUNNEL_PORTALS[0][2]],
     sdf:      trainFrame(wagonsShape),
-    boundingBox: [17.0, 5.8, 17.0],
+    // Forward drawbar reaches to z ≈ 19.3; diagonal yaw sweeps the
+    // (3.1, 19.3) corner to ≈ 19.5.
+    boundingBox: [19.7, 5.8, 19.7],
   });
   const smoke = add({
     name:     'cove-train-smoke',

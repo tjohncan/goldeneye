@@ -94,9 +94,17 @@ const montBlancPeaks = (h, baseR) => [
 // sides peak at slope ~1.5 (noise included), Lipschitz-safe up to
 // ~0.55 — creeping at 0.30 made rays grazing its flanks exhaust the
 // step budget and halo the silhouette.
-const makeMountainSdf = ({ peaks, noiseSeed, peakH, sdfScale }) => {
+const makeMountainSdf = ({ peaks, noiseSeed, peakH, sdfScale, tunnels }) => {
   const yOff  = peakH / 2;
   const scale = sdfScale ?? 0.30;
+  // Tunnel-mouth (x, z) centers in mountain-local coords — the surface
+  // noise is faded to zero within NOISE_CLEAR of each so the painted
+  // arch lands on smooth ground. A mouth on the inner (sub-subR) flank
+  // sits where the shallow bell (~5 tall) is dwarfed by the ±5.6 noise,
+  // so the raw surface writhes and shreds the arch edge; flattening it
+  // there also gentles the gradient (marcher-safe by construction).
+  const mouths = tunnels || null;
+  const NOISE_CLEAR = 42;
   return (lpx, lpy, lpz) => {
     const lpyBase = lpy + yOff;
     let surfaceMax = 0;
@@ -123,10 +131,17 @@ const makeMountainSdf = ({ peaks, noiseSeed, peakH, sdfScale }) => {
     }
 
     if (hadAny) {
-      const noise = (
+      let noise = (
         Math.sin(lpx * 0.030 + noiseSeed) * Math.cos(lpz * 0.030 + noiseSeed * 1.7) +
         Math.sin(lpx * 0.080 + noiseSeed * 1.3) * Math.cos(lpz * 0.075 + noiseSeed * 0.8) * 0.4
       ) * 4;
+      if (mouths !== null) {
+        for (let i = 0; i < mouths.length; i++) {
+          const mx = lpx - mouths[i][0], mz = lpz - mouths[i][2];
+          const md = Math.sqrt(mx * mx + mz * mz);
+          if (md < NOISE_CLEAR) { noise *= md / NOISE_CLEAR; break; }
+        }
+      }
       const surfaceH = surfaceMax + noise;
       // Interior distance measures to the SLOPE overhead, not the base
       // plane: the base term used to win anywhere below mid-height, so

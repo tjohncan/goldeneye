@@ -70,19 +70,19 @@ const hullShape = smoothUnionSDF(0.65,
 // rig registers as its own Item positioned RIG_DY above the hull so
 // its AABB hugs the sail instead of spanning keel-to-masthead.
 const RIG_DY = 11;
-// Boom + sail-foot ride ABOVE the cabin top (5.2) — the first rig had
-// the sail's lower edge passing through the cabin roof, which read as
-// white canvas poking out of the woodwork astern.
+// Boom + sail-foot ride a proper ~1.9 ABOVE the cabin top (5.2) —
+// coachroof clearance, the way a gooseneck sits on a real sloop
+// (the first cut left the boom almost resting on the cabin roof).
 const sailLeechPlane = (() => {
-  // Leech runs masthead (y 20.3, z +0.9) → boom end (y 5.9, z -7.7).
-  const inv = 1 / Math.hypot(14.4, 8.6);
-  return planeSDF([0, 8.6 * inv, -14.4 * inv], (8.6 * 20.3 - 14.4 * 0.9) * inv);
+  // Leech runs masthead (y 20.3, z +0.9) → clew (y 7.4, z -7.7).
+  const inv = 1 / Math.hypot(12.9, 8.6);
+  return planeSDF([0, 8.6 * inv, -12.9 * inv], (8.6 * 20.3 - 12.9 * 0.9) * inv);
 })();
 const rigShape = unionSDF(
   translateSDF([0, 11.30, +1.10], cylinderSDF(9.6, 0.30)),                    // mast
-  translateSDF([0, 5.60, -3.70], rotateXSDF(Math.PI / 2, cylinderSDF(4.8, 0.19))), // boom
+  translateSDF([0, 7.10, -3.70], rotateXSDF(Math.PI / 2, cylinderSDF(4.8, 0.19))), // boom
   intersectionSDF(
-    translateSDF([0, 13.10, -3.40], boxSDF([0.10, 7.2, 4.3])),
+    translateSDF([0, 13.85, -3.40], boxSDF([0.10, 6.45, 4.3])),
     sailLeechPlane,
   ),
   translateSDF([0, 21.30, -0.20], boxSDF([0.06, 0.46, 0.93])),               // pennant
@@ -115,7 +115,7 @@ const hullColorFn = (lpx, lpy, lpz) => {
 const rigColorFn = (lpx, lpy, lpz) => {
   const bz = lpx * S.sy + lpz * S.cy;
   if (lpy > 9.6) return [350, 98, 82];                       // pennant
-  if (bz > 0.9 || lpy < -5.15) return [122, 92, 60];         // mast / boom wood
+  if (bz > 0.9 || lpy < -3.65) return [122, 92, 60];         // mast / boom wood
   const seam = Math.floor(lpy / 2.0) & 1;                    // sail cloth seams
   return seam === 0 ? [424, 420, 408] : [399, 395, 381];
 };
@@ -185,7 +185,7 @@ export const addToScene = (add, { seaLevelY }) => {
   // the sail feel like fabric you thump into. Mast/boom stay thin —
   // clipping past a pole reads fine; a wall shouldn't.
   const framedSailPad = boatFrame(
-    translateSDF([0, 13.10, -3.40], boxSDF([1.0, 7.2, 4.3])),
+    translateSDF([0, 13.85, -3.40], boxSDF([1.0, 6.45, 4.3])),
   );
   const sailPad = add({
     name:      'sloop-sail-pad',
