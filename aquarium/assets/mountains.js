@@ -174,22 +174,24 @@ const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH, tunnels }) => 
         const tn = tunnels[i];
         const dx = lpx - tn[0];
         const dz = lpz - tn[2];
-        if (dx * dx + dz * dz > 1050) continue;
+        if (dx * dx + dz * dz > 1500) continue;
         // Tunnel-arch profile, anchored at rail level and STRETCHED
         // up-slope along the bore axis (tn[3..4], toward the mountain
-        // core): the mouth paints onto a shallow skirt seen nearly
-        // edge-on from the track, so a circular patch foreshortens to
-        // a dot — the elongated footprint climbs the hillside and
-        // reads as a bore driven into it. Across-track half-width 15,
-        // along-bore reach ~29, crown ~17 over the rails.
+        // core): the mouth paints onto a skirt seen nearly edge-on from
+        // the track, so a circular patch foreshortens to a dot — the
+        // elongated footprint climbs the hillside and reads as a bore
+        // driven into it. Size + elongation are per-portal (tn[5..6])
+        // so a steeper skirt can carry a bigger, rounder mouth. Base
+        // profile: across-track half-width 15, crown ~21 over rails.
         const u = dx * tn[3] + dz * tn[4];     // along the bore axis
         const v = dz * tn[3] - dx * tn[4];     // across it
         const ay = lpy - tn[1] + 8;            // 0 at the rail base
         if (ay > -1.5) {
-          const dome = ay > 8 ? (ay - 8) * 1.15 : 0;   // crown ≈ 21 over the rails
-          const p2 = v * v + u * u * 0.27 + dome * dome;
-          if (p2 < 225) return [26, 24, 28];   // the dark bore
-          if (p2 < 342) return [96, 86, 78];   // dressed-stone ring
+          const dome = ay > 8 ? (ay - 8) * 1.15 : 0;
+          const p2 = v * v + u * u * tn[6] + dome * dome;
+          const sm = tn[5] * tn[5];            // linear scale → area threshold
+          if (p2 < 225 * sm) return [26, 24, 28];   // the dark bore
+          if (p2 < 342 * sm) return [96, 86, 78];   // dressed-stone ring
         }
       }
     }
@@ -299,7 +301,8 @@ export const addToScene = (add, { plateauY, tunnels = [] }) => {
       const dx = tw[0] - cx, dz = tw[2] - cz;
       const d = Math.sqrt(dx * dx + dz * dz);
       if (d < m.baseR) {
-        myTunnels.push([dx, tw[1] - cy, dz, -dx / d, -dz / d]);
+        // [dx, dy, dz, axisX, axisZ, sizeScale, elongCoeff]
+        myTunnels.push([dx, tw[1] - cy, dz, -dx / d, -dz / d, tw[3] ?? 1, tw[4] ?? 0.27]);
       }
     }
     if (myTunnels.length > 0) m.tunnels = myTunnels;

@@ -56,12 +56,21 @@ const PORTAL_B_TH = -72.6 * DEG;              // mont-blanc side
 const TURN_A_TH = -127.5 * DEG;
 const TURN_B_TH = -62.0 * DEG;
 
-/** Tunnel-mouth world points, exported for mountains.js to paint dark
- *  arches on the right flanks. Y sits above the rail line so most of
- *  the mouth sphere lands on visible skin instead of below grade. */
+/** Tunnel-mouth portals, exported for mountains.js to paint dark
+ *  arches on the flanks. Each entry: [x, y, z, sizeScale, elongCoeff].
+ *  Y sits near the rail line so the mouth lands on visible skin. The
+ *  two mountains have different skirt steepness, so each mouth is tuned
+ *  independently:
+ *   - matterhorn (LEFT, sharp horn): a steeper skirt made the shared
+ *     slim profile read as a small slit ABOVE the track. Bigger
+ *     (1.5×), rounder (elong 0.55 vs 0.27 — less up-slope stretch), and
+ *     dropped to y=-9 so the bore centers on the ballast the train
+ *     actually runs on.
+ *   - mont-blanc (RIGHT, gentle ridge): the original slim profile
+ *     reads well on its shallow slope; left as-is. */
 export const TUNNEL_PORTALS = [
-  [TRACK_R * Math.cos(PORTAL_A_TH), -5, TRACK_R * Math.sin(PORTAL_A_TH)],
-  [TRACK_R * Math.cos(PORTAL_B_TH), -5, TRACK_R * Math.sin(PORTAL_B_TH)],
+  [TRACK_R * Math.cos(PORTAL_A_TH), -9, TRACK_R * Math.sin(PORTAL_A_TH), 1.5, 0.55],
+  [TRACK_R * Math.cos(PORTAL_B_TH), -5, TRACK_R * Math.sin(PORTAL_B_TH), 1.0, 0.27],
 ];
 
 // Ribbon paint dimensions (radial offsets from the arc centerline).
