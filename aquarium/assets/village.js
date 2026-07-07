@@ -109,25 +109,81 @@ const makeCottageSdf = ({ hx, bodyHalfH, hz, roofH, yaw }) => {
 
 // Cottage colorFn — paints in the PRE-ROTATION frame (x, z below) so
 // doors and windows stay glued to their faces at any yaw. `sc` scales
-// the human-sized fittings (door, windows, sign, trim) with the
-// building. Structure:
+// the human-sized fittings with the building. Structure:
 //   - roof: shingle rows in alternating shades
-//   - front face (+z): door with brass-dot knob, glowing windows with
-//     dark muntin cross, optional painted-goldfish shop sign
-//   - side faces: one glowing window per storey
-//   - walls: plaster with darker corner trim
-const makeCottageColorFn = ({ hx, bodyHalfH, hz, roofH, yaw, pal, stories, fishSign, sc }) => {
+//   - front face (+z): door with brass-dot knob, FRAMED 4-pane windows
+//     with a wood sill (so they read as windows, never doorways), and
+//     an optional painted-goldfish shop sign
+//   - side faces: one framed window per storey
+//   - walls: a material texture per building (`wallStyle`: clapboard
+//     shadow lines / offset brick courses / coursed stone), corner
+//     quoins, footing course, and an optional climbing vine — all
+//     drawn from the building's own palette so tints stay coherent
+const _vhash = (a, b) => {
+  const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+  return v - Math.floor(v);
+};
+const makeCottageColorFn = ({ hx, bodyHalfH, hz, roofH, yaw, pal, stories,
+                              fishSign, sc, wallStyle = 'clapboard', vine = false }) => {
   const c = Math.cos(yaw), s = Math.sin(yaw);
   const H     = 2 * bodyHalfH + roofH;
   const baseY = -H / 2;
   const eaveY = baseY + 2 * bodyHalfH;
   const GLOW  = [560, 440, 230];             // over-bright amber; reads lit at wall-ambient
   const TRIM  = pal.trim;
+  const SILL  = [120, 92, 60];
+  // Walls are VERTICAL, so under the cove's straight-up sun they shade
+  // ambient-only (~0.35) — plaster tints would read near-black and the
+  // new material texture would vanish. B lifts every wall-face return
+  // to roughly roof brightness (angled roofs catch ~0.72), the same
+  // over-bright trick the sail and lighthouse use. The glowing panes
+  // and the deliberately-dark door stay unboosted for contrast.
+  const B = 1.6;
+  const lit = (col) => [col[0] * B, col[1] * B, col[2] * B];
   // Storey window-row heights (local Y).
   const rows = stories === 2
     ? [baseY + 2 * bodyHalfH * 0.32, baseY + 2 * bodyHalfH * 0.72]
     : [baseY + 2 * bodyHalfH * 0.60];
   const doorX = fishSign ? -hx * 0.42 : 0;
+
+  // Framed 4-pane window at (u, v) offset from its center; null off it.
+  const windowAt = (u, v, halfU, halfV) => {
+    const au = Math.abs(u), av = Math.abs(v);
+    if (v <= -halfV && v > -halfV - 0.24 * sc && au < halfU + 0.12 * sc) return lit(SILL);
+    if (au > halfU || av > halfV) return null;
+    const fr = 0.15 * sc;
+    if (au > halfU - fr || av > halfV - fr) return lit(TRIM);   // outer frame
+    if (au < 0.07 * sc || av < 0.07 * sc) return lit(TRIM);     // muntin cross
+    return GLOW;                                                // lit pane
+  };
+
+  // Wall material at horizontal face-coord `a`, height `yr` above base.
+  const wallTex = (a, yr) => {
+    if (wallStyle === 'brick') {
+      const Bh = 0.66 * sc, Bl = 1.4 * sc, M = 0.13 * sc;
+      const course = Math.floor(yr / Bh);
+      const off = (course & 1) ? Bl * 0.5 : 0;
+      const col = Math.floor((a + off) / Bl);
+      if (yr - course * Bh < M || (a + off) - col * Bl < M) return lit(pal.wallDark);
+      const j = _vhash(course, col), base = j > 0.5 ? pal.wall : pal.wallLight;
+      const d = (j - 0.5) * 14;
+      return [(base[0] + d) * B, (base[1] + d) * B, (base[2] + d) * B];
+    }
+    if (wallStyle === 'stone') {
+      const G = 0.95 * sc, M = 0.15 * sc;
+      const cr = Math.floor(yr / G), jr = _vhash(cr, 7) * 0.5 * sc;
+      const cc = Math.floor((a + jr) / G), jit = _vhash(cr, cc);
+      if (yr - cr * G < M * (0.7 + jit) || (a + jr) - cc * G < M * (0.7 + jit)) return lit(pal.wallDark);
+      const base = jit > 0.55 ? pal.wallLight : pal.wall, d = (_vhash(cc, cr) - 0.5) * 20;
+      return [(base[0] + d) * B, (base[1] + d) * B, (base[2] + d) * B];
+    }
+    // clapboard — horizontal boards, a shadow groove at each board base
+    const P = 1.0 * sc, b = ((yr % P) + P) % P;
+    if (b < 0.12 * sc) return lit(pal.wallDark);
+    const idx = Math.floor(yr / P), base = (idx & 1) ? pal.wall : pal.wallLight;
+    const grain = Math.sin(a * 2.3 / sc + idx) * 5;
+    return [(base[0] + grain) * B, (base[1] + grain) * B, (base[2] + grain) * B];
+  };
 
   return (lpx, lpy, lpz) => {
     const x = lpx * c - lpz * s;
@@ -168,43 +224,53 @@ const makeCottageColorFn = ({ hx, bodyHalfH, hz, roofH, yaw, pal, stories, fishS
           return [66, 48, 34];               // sign board
         }
       }
-      // Door — vertical planks, brass knob dot.
+      // Door — vertical planks, brass knob dot. Reaches the ground, so
+      // it stays unmistakably a door against the mid-wall windows.
       if (Math.abs(x - doorX) < 1.05 * sc && lpy < baseY + 3.1 * sc) {
         const kx = x - (doorX + 0.62 * sc), ky = lpy - (baseY + 1.55 * sc);
         if (kx * kx + ky * ky < 0.02 * sc * sc) return [205, 170, 75];
         const grain = Math.sin(x * 7 / sc) * 0.35;
         return [96 + 18 * grain, 66 + 12 * grain, 42 + 8 * grain];
       }
-      // Front windows — one each side of the door (skip the door slot).
+      // Front windows — framed panes, one each side of the door.
+      const wxs = fishSign ? [hx * 0.38] : [-hx * 0.52, hx * 0.52];
+      const hU = fishSign ? 1.2 * sc : 0.72 * sc, hV = fishSign ? 0.72 * sc : 0.60 * sc;
       for (let i = 0; i < rows.length; i++) {
-        const wy = rows[i];
-        if (Math.abs(lpy - wy) < 0.78 * sc) {
-          const wxs = fishSign ? [hx * 0.38] : [-hx * 0.52, hx * 0.52];
-          for (let j = 0; j < wxs.length; j++) {
-            const dx = x - wxs[j];
-            if (Math.abs(dx) < (fishSign ? 1.35 : 0.80) * sc) {
-              if (Math.abs(dx) < 0.08 * sc || Math.abs(lpy - wy) < 0.08 * sc) return TRIM;
-              return GLOW;
-            }
-          }
+        for (let j = 0; j < wxs.length; j++) {
+          const cW = windowAt(x - wxs[j], lpy - rows[i], hU, hV);
+          if (cW !== null) return cW;
         }
       }
-    } else if (Math.abs(x) > hx - 0.25) {
-      // Side windows — one per storey, centered along the side.
+    } else if (Math.abs(x) > hx - 0.3) {
+      // Side windows — one framed pane per storey.
       for (let i = 0; i < rows.length; i++) {
-        const wy = rows[i];
-        if (Math.abs(lpy - wy) < 0.72 * sc && Math.abs(z) < 0.75 * sc) {
-          if (Math.abs(z) < 0.08 * sc || Math.abs(lpy - wy) < 0.08 * sc) return TRIM;
-          return GLOW;
-        }
+        const cW = windowAt(z, lpy - rows[i], 0.6 * sc, 0.58 * sc);
+        if (cW !== null) return cW;
       }
     }
 
-    // Plaster walls, darker band at the footing, trim at the corners.
-    if (lpy < baseY + 0.5 * sc) return pal.wallDark;
-    if (Math.abs(x) > hx - 0.35 * sc && Math.abs(z) > hz - 0.35 * sc) return TRIM;
-    const mottle = Math.sin(x * 1.7 / sc + lpy * 2.3 / sc) * Math.cos(z * 1.9 / sc);
-    return mottle > 0.55 ? pal.wallLight : pal.wall;
+    // Footing course, then corner quoins.
+    if (lpy < baseY + 0.5 * sc) return lit(pal.wallDark);
+    if (Math.abs(x) > hx - 0.35 * sc && Math.abs(z) > hz - 0.35 * sc) return lit(TRIM);
+
+    // Climbing vine on a front corner (wavy stem + hashed leaf blobs).
+    if (vine && onFront) {
+      const yr = lpy - baseY;
+      const wob = Math.sin(yr * 0.9 / sc) * 0.6 * sc + Math.sin(yr * 2.7 / sc + 1) * 0.25 * sc;
+      const cx = -hx + 1.4 * sc + wob;
+      if (Math.abs(x - cx) < 0.16 * sc) return lit([58, 92, 44]);  // stem
+      const li = Math.floor(yr / (0.7 * sc));
+      const lx = cx + (_vhash(li, 3) - 0.5) * 2.2 * sc;
+      const ly = baseY + (li + 0.5) * 0.7 * sc;
+      const dx = x - lx, dy = lpy - ly;
+      if (dx * dx + dy * dy < 0.42 * sc * 0.42 * sc) {
+        return lit(_vhash(li, 5) > 0.5 ? [70, 110, 52] : [52, 86, 42]);
+      }
+    }
+
+    // Wall material.
+    const onSide = Math.abs(x) > hx - 0.3;
+    return wallTex(onSide ? z : x, lpy - baseY);
   };
 };
 
@@ -345,22 +411,27 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
   const cottages = [
     { name: 'village-shop',         x: 83, z: -300, yaw: -0.74, sc: 2.8,
       hx: 22.0, bodyHalfH: 14.0, hz: 17.0, roofH: 14.0, stories: 2, fishSign: true, ridgePerches: 2,
+      wallStyle: 'brick', vine: false,
       pal: { wall: [242, 230, 202], wallLight: [252, 242, 218], wallDark: [188, 172, 148],
              roof: [186, 96, 64], roofDark: [158, 78, 52], trim: [96, 70, 48] } },
     { name: 'village-cottage-tall', x: -52, z: -297, yaw: +2.42, sc: 3.2,
       hx: 17.0, bodyHalfH: 19.0, hz: 15.0, roofH: 15.0, stories: 2, fishSign: false, ridgePerches: 2,
+      wallStyle: 'clapboard', vine: true,
       pal: { wall: [232, 208, 150], wallLight: [244, 222, 168], wallDark: [186, 164, 116],
              roof: [186, 96, 64], roofDark: [158, 78, 52], trim: [96, 70, 48] } },
     { name: 'village-manor',        x: -8, z: -424, yaw: -0.95, sc: 4.0,
       hx: 28.0, bodyHalfH: 24.0, hz: 22.0, roofH: 22.0, stories: 2, fishSign: false, ridgePerches: 2,
+      wallStyle: 'stone', vine: false,
       pal: { wall: [226, 219, 202], wallLight: [240, 233, 216], wallDark: [178, 170, 152],
              roof: [88, 94, 108], roofDark: [72, 78, 92], trim: [92, 78, 58] } },
     { name: 'village-cottage-sage', x: -115, z: -403, yaw: +2.17, sc: 2.6,
       hx: 15.0, bodyHalfH: 11.5, hz: 13.5, roofH: 11.5, stories: 1, fishSign: false, ridgePerches: 1,
+      wallStyle: 'clapboard', vine: true,
       pal: { wall: [200, 210, 180], wallLight: [216, 224, 196], wallDark: [156, 166, 140],
              roof: [104, 110, 122], roofDark: [86, 92, 104], trim: [88, 76, 58] } },
     { name: 'village-cottage-blue', x: -96, z: -500, yaw: -0.70, sc: 2.4,
       hx: 13.5, bodyHalfH: 10.0, hz: 12.0, roofH: 10.0, stories: 1, fishSign: false, ridgePerches: 1,
+      wallStyle: 'brick', vine: false,
       pal: { wall: [176, 194, 210], wallLight: [192, 208, 222], wallDark: [138, 156, 174],
              roof: [96, 102, 114], roofDark: [80, 86, 98], trim: [80, 72, 62] } },
   ];
