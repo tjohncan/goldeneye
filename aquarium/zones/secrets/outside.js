@@ -1127,6 +1127,22 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
                   SHORE_RING_R + SHORE_TUBE_R + 0.3],
   });
 
+  // Bowl-rim skirt — a sand bank filling the acute wedge where the
+  // deep seafloor meets the dome's inward-curving wall. Same disease
+  // as the shoreline wedge at a bigger radius: rays grazing into that
+  // ring-shaped corner from altitude striped the far water with
+  // concentric step-outcome bands (crop circles, per the aerial
+  // survey). The skirt hands them an honest surface. Thin-Y AABB
+  // keeps it out of every ray that isn't aimed at the deep rim.
+  const RIM_R = 985, RIM_TUBE = 22, RIM_Y = -180;
+  add({
+    name:     'bowl-rim-skirt',
+    color:    [172, 158, 126],
+    position: [0, RIM_Y, 0],
+    sdf:      (px, py, pz) => Math.hypot(Math.hypot(px, pz) - RIM_R, py) - RIM_TUBE,
+    boundingBox: [RIM_R + RIM_TUBE + 0.5, RIM_TUBE + 0.5, RIM_R + RIM_TUBE + 0.5],
+  });
+
   // House exterior — the visible building from the cove. Wraps the
   // kitchen + all secret zones in one shell, with the keyhole bore cut
   // through. AABB matches the shack's outer extents exactly; cove rays
