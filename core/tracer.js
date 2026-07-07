@@ -39,7 +39,11 @@ import { sdfGrad } from './scene.js';
  * @typedef {{
  *   lightDir?:   Vec3,
  *   ambient?:    number,
- *   background?: Vec3,
+ *   background?: Vec3,   // per-trace, keyed by the RAY ORIGIN's region
+ *                        // (like maxDist): the region's miss/step-
+ *                        // exhaustion color. Lets one region's misses
+ *                        // read as distance haze while another keeps
+ *                        // silhouette black.
  *   maxDist?:    number,
  * }} LightingPartial   per-region override; only set the fields you change
  */
@@ -67,13 +71,50 @@ import { sdfGrad } from './scene.js';
  * }} Lighting
  */
 
-const MAX_STEPS    = 44;
+// Only rays that use the WHOLE budget pay for headroom here, and those
+// are exactly the grazing rays that need it — raising this is cheap
+// insurance against silhouette-edge exhaustion, not a per-ray tax.
+const MAX_STEPS    = 66;
 const HIT_EPSILON  = 0.001;
 const MAX_DIST     = 1000;      // default safety cap; per-call override via lighting.maxDist
 const NORMAL_EPS   = 0.0015;
 const STEP_PAST    = 0.003;     // small forward step after a translucent hit
 const EXIT_EPS     = 0.001;     // SDF must exceed this to consider us "out"
 const ALPHA_STOP   = 0.02;      // bail when remaining alpha drops below this
+
+/** Distance-proportional widening applied to BOTH the hit threshold and
+ *  the translucent exit threshold: a surface counts as hit within
+ *  (HIT_EPSILON + t·EPS_SLOPE) of the ray. Rationale: a screen pixel's
+ *  world footprint grows with distance (~0.05·t at a 64-cell grid over
+ *  a hemispheric lens), so accepting a hit 0.005·t early is sub-pixel
+ *  at every distance — invisible — while it rescues the pathological
+ *  grazing case: a ray skimming a large flat surface closes only
+ *  sin(grazing angle) of its gap per sphere-trace step, and at shallow
+ *  angles exhausts MAX_STEPS short of the surface, painting background
+ *  through geometry. Fewer steps per ray also means faster frames.
+ *
+ *  The exit threshold widens by the same amount so a translucent item
+ *  hit early stays "inside" (skipped) until the ray is genuinely past
+ *  its surface — otherwise the next step would un-mark it (SDF still
+ *  positive) and re-hit it, stacking its tint several times per
+ *  crossing at grazing angles. */
+const EPS_SLOPE    = 0.005;
+
+/** Forced-hit window on step exhaustion, as a multiple of the relaxed
+ *  hit threshold. A ray that spends its whole step budget CREEPING
+ *  toward a surface it never quite reaches (tangent rays along
+ *  conservatively-scaled SDFs — heightfields, grazing planes) used to
+ *  fall through to the background mix, punching a background-colored
+ *  halo through the silhouette onto whatever lay behind. If the ray
+ *  dies within this window of its nearest surface, shade that surface
+ *  instead. The positional error is a few relaxed epsilons — sub-pixel
+ *  at the distances where exhaustion happens — while the halo it
+ *  replaces was a full-pixel artifact. 8 also catches rays that skim
+ *  a flat surface nearly parallel for hundreds of units, and the
+ *  dashed leaks along shallow heightfield skirts where the creep is
+ *  double (conservative SDF scale × grazing angle); at 8×0.005·t the
+ *  window is still ~80% of a pixel's footprint. */
+const FORCED_HIT   = 8;
 
 /** @type {Lighting} sun straight up, dim ambient, black miss-color. */
 const DEFAULT_LIGHTING = {
@@ -133,6 +174,26 @@ const ensureRegionBuckets = (scene) => {
  *  trace; matters only if items can ever be destroyed during a session,
  *  but defensive enough to keep. */
 const _candidates = [];
+
+/** Per-trace packed cull table. The per-ray bounding filter used to
+ *  re-derive each item's origin-relative slab bounds (ip - bb - origin)
+ *  for every ray — but the ray ORIGIN is constant across a trace's
+ *  whole batch, so those six differences are per-trace constants.
+ *  trace() packs them once into a flat Float32Array (plus a kind tag
+ *  and an item ref), and the per-ray loop reads contiguous floats with
+ *  zero pointer-chasing into item objects until an item actually
+ *  passes. Invisible items are dropped at pack time, so items a scene
+ *  parks between uses (object pools, hidden states) cost nothing per
+ *  ray. Layout per item:
+ *    kind 1 (box):    [dxMin, dxMax, dyMin, dyMax, dzMin, dzMax]
+ *    kind 2 (sphere): [cx, cy, cz, r², r, —]
+ *    kind 0 (none):   always-candidate (unbounded items)
+ *  Arrays are module-level and lazily grown; _cullItems is truncated
+ *  after each trace for the same tail-reference rationale as
+ *  _candidates. */
+let _cullData  = new Float32Array(6 * 64);
+let _cullKind  = new Uint8Array(64);
+const _cullItems = [];
 
 /** Per-ray "inside" list — translucent items the ray is currently passing
  *  through. Length tracked separately as `_insideLen`. Same truncation
@@ -208,6 +269,11 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
   let remaining = 1.0;
   _insideLen = 0;
 
+  // Hoisted out of the loop so the forced-hit fallback below can see
+  // what the final step was converging on.
+  let nearestD = Infinity;
+  let nearestItem = null;
+
   for (let step = 0; step < MAX_STEPS; step++) {
     if (remaining < ALPHA_STOP) break;
 
@@ -215,14 +281,19 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
     const py = oy + t * dy;
     const pz = oz + t * dz;
 
+    // Distance-proportional slack for this step's hit/exit thresholds
+    // (see EPS_SLOPE).
+    const relaxEps = t * EPS_SLOPE;
+
     // Un-mark items the ray has fully exited (their SDF here is back to
-    // positive). Swap-remove to avoid splice's allocation.
+    // positive past the relaxed band). Swap-remove to avoid splice's
+    // allocation.
     if (_insideLen > 0) {
       for (let i = _insideLen - 1; i >= 0; i--) {
         const item = _inside[i];
         const ip = item.position;
         const d = item.sdf(px - ip[0], py - ip[1], pz - ip[2]);
-        if (d > EXIT_EPS) {
+        if (d > EXIT_EPS + relaxEps) {
           _inside[i] = _inside[--_insideLen];
         }
       }
@@ -234,8 +305,8 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
     const region = _regionFn !== null ? _regionFn(px, py, pz) : null;
 
     // Find nearest non-inside surface among candidates.
-    let nearestD = Infinity;
-    let nearestItem = null;
+    nearestD = Infinity;
+    nearestItem = null;
     for (let i = 0; i < sceneLen; i++) {
       const item = scene[i];
       // Region filter. Single-key items mismatch out fast; array-keyed
@@ -263,7 +334,7 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
       }
     }
 
-    if (nearestD < HIT_EPSILON) {
+    if (nearestD < HIT_EPSILON + relaxEps) {
       const ip = nearestItem.position;
       const lpx = px - ip[0], lpy = py - ip[1], lpz = pz - ip[2];
       const [gx, gy, gz] = sdfGrad(nearestItem.sdf, lpx, lpy, lpz, nearestD, NORMAL_EPS);
@@ -310,14 +381,63 @@ const marchRay = (ox, oy, oz, dx, dy, dz, scene, sceneLen,
       }
 
       // Translucent — skip this item on subsequent steps until we've
-      // marched out of it, and step forward a hair to clear its surface.
+      // marched out of it, and step forward to the surface (a relaxed
+      // hit registers up to relaxEps early) plus a hair to clear it.
       _inside[_insideLen++] = nearestItem;
-      t += STEP_PAST;
+      t += (nearestD > 0 ? nearestD : 0) + STEP_PAST;
     } else {
       t += nearestD;
     }
 
     if (t > _maxDist) break;
+  }
+
+  // Forced hit on step exhaustion (see FORCED_HIT): if the march died
+  // while converging on a surface — within a few relaxed epsilons —
+  // shade that surface rather than leaking background through the
+  // silhouette. Skipped when the item is one the ray is currently
+  // inside (a translucent it just tinted; shading again would stack
+  // its contribution). Shading mirrors the in-loop hit path.
+  if (nearestItem !== null && remaining >= ALPHA_STOP) {
+    let isInside = false;
+    for (let k = 0; k < _insideLen; k++) {
+      if (_inside[k] === nearestItem) { isInside = true; break; }
+    }
+    if (!isInside) {
+      const px = ox + t * dx;
+      const py = oy + t * dy;
+      const pz = oz + t * dz;
+      const ip = nearestItem.position;
+      const lpx = px - ip[0], lpy = py - ip[1], lpz = pz - ip[2];
+      const d = nearestItem.sdf(lpx, lpy, lpz);
+      if (d < FORCED_HIT * (HIT_EPSILON + t * EPS_SLOPE)) {
+        const [gx, gy, gz] = sdfGrad(nearestItem.sdf, lpx, lpy, lpz, d, NORMAL_EPS);
+        const glen = Math.sqrt(gx * gx + gy * gy + gz * gz);
+
+        let hLx = lx, hLy = ly, hLz = lz, hAmbient = ambient;
+        if (_byRegionShading !== null && _regionFn !== null) {
+          const r = _byRegionShading[_regionFn(px, py, pz)];
+          if (r !== undefined) {
+            hLx = r.lx; hLy = r.ly; hLz = r.lz; hAmbient = r.ambient;
+          }
+        }
+
+        let brightness = hAmbient;
+        if (glen > 1e-9) {
+          const ndotl = (gx * hLx + gy * hLy + gz * hLz) / glen;
+          if (ndotl > 0) brightness += (1 - hAmbient) * ndotl;
+        }
+
+        const c = nearestItem.colorFn !== null
+          ? nearestItem.colorFn(lpx, lpy, lpz)
+          : nearestItem.color;
+        const w = nearestItem.opacity * remaining;
+        accR += c[0] * brightness * w;
+        accG += c[1] * brightness * w;
+        accB += c[2] * brightness * w;
+        remaining *= 1 - nearestItem.opacity;
+      }
+    }
   }
 
   // Background mix for unaccumulated alpha.
@@ -350,19 +470,21 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   const cameraRegion = scene.regionFn ? scene.regionFn(ox, oy, oz) : null;
 
   // Per-region lighting setup. Two distinct concerns:
-  //   - maxDist is a per-RAY cap, can't sensibly vary mid-march, so the
-  //     ray-origin's region picks it.
+  //   - maxDist + background are per-RAY properties (a distance cap
+  //     can't sensibly vary mid-march; background colors leftover
+  //     alpha on the ray as a whole), so the ray-origin's region
+  //     picks them.
   //   - lightDir + ambient affect SHADING, which only matters at the
   //     hit point; using the camera's region for them produces a jarring
   //     flip when crossing a boundary. Pre-merge each region's shading
   //     into _byRegionShading and let marchRay look up at each hit by
   //     the HIT POINT's region instead.
-  // background is per-trace too (it modulates leftover-alpha on the ray
-  // as a whole; not worth a per-region nuance).
-  let originMaxDist = lighting.maxDist;
+  let originMaxDist    = lighting.maxDist;
+  let originBackground = lighting.background;
   if (lighting.byRegion && cameraRegion !== null) {
     const override = lighting.byRegion[cameraRegion];
     if (override && override.maxDist !== undefined) originMaxDist = override.maxDist;
+    if (override && override.background !== undefined) originBackground = override.background;
 
     if (_byRegionShadingForLighting !== lighting) {
       _byRegionShading = {};
@@ -384,8 +506,7 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   // Base shading — used at hits in regions without a byRegion entry.
   const lightDir = lighting.lightDir;
   const lx = lightDir[0], ly = lightDir[1], lz = lightDir[2];
-  const bg = lighting.background;
-  const bgR = bg[0], bgG = bg[1], bgB = bg[2];
+  const bgR = originBackground[0], bgG = originBackground[1], bgB = originBackground[2];
   const ambient = lighting.ambient;
 
   if (_outBuffer === null || _outBuffer.length < 3 * N) {
@@ -412,6 +533,45 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
     }
   }
 
+  // Pack the per-trace cull table (see _cullData block comment): every
+  // item's bounding shape, pre-translated to origin-relative space,
+  // laid out flat. The 6400-ray loop below then reads sequential
+  // Float32Array lanes instead of chasing item.position/item.boundingBox
+  // per item per ray, and re-derives nothing that doesn't vary by ray.
+  if (_cullKind.length < activeLen) {
+    _cullData = new Float32Array(6 * activeLen);
+    _cullKind = new Uint8Array(activeLen);
+  }
+  let pc = 0;
+  for (let j = 0; j < activeLen; j++) {
+    const item = activeScene[j];
+    if (item.invisible) continue;
+    const bb = item.boundingBox;
+    const r  = item.boundingRadius;
+    const base = pc * 6;
+    if (bb !== null) {
+      const ip = item.position;
+      _cullKind[pc] = 1;
+      _cullData[base]     = ip[0] - bb[0] - ox;
+      _cullData[base + 1] = ip[0] + bb[0] - ox;
+      _cullData[base + 2] = ip[1] - bb[1] - oy;
+      _cullData[base + 3] = ip[1] + bb[1] - oy;
+      _cullData[base + 4] = ip[2] - bb[2] - oz;
+      _cullData[base + 5] = ip[2] + bb[2] - oz;
+    } else if (r !== null) {
+      const ip = item.position;
+      _cullKind[pc] = 2;
+      _cullData[base]     = ip[0] - ox;
+      _cullData[base + 1] = ip[1] - oy;
+      _cullData[base + 2] = ip[2] - oz;
+      _cullData[base + 3] = r * r;
+      _cullData[base + 4] = r;
+    } else {
+      _cullKind[pc] = 0;
+    }
+    _cullItems[pc++] = item;
+  }
+
   for (let i = 0; i < N; i++) {
     const dir = directions[i];
     const dx = dir[0], dy = dir[1], dz = dir[2];
@@ -424,28 +584,29 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
     const invDy = dy === 0 ? 0 : 1 / dy;
     const invDz = dz === 0 ? 0 : 1 / dz;
 
-    // Per-ray bounding filter. Each item declares either a bounding sphere
-    // (boundingRadius) or a bounding box (boundingBox); the corresponding
-    // line-vs-shape test drops items the ray can't possibly hit before
-    // any per-step SDF evaluation. Items with neither bound are always
-    // kept — for surfaces that span the scene and could be hit by any ray.
+    // Per-ray bounding filter over the packed cull table. Each item
+    // declared either a bounding sphere or a bounding box; the
+    // corresponding line-vs-shape test drops items the ray can't
+    // possibly hit before any per-step SDF evaluation. Kind-0 items
+    // (no bound) are always kept — surfaces that span the scene.
     let nc = 0;
-    for (let j = 0; j < activeLen; j++) {
-      const item = activeScene[j];
-      if (item.invisible) continue;
-      const bb = item.boundingBox;
-      const r  = item.boundingRadius;
+    for (let j = 0; j < pc; j++) {
+      const kind = _cullKind[j];
+      if (kind === 0) {
+        _candidates[nc++] = _cullItems[j];
+        continue;
+      }
+      const base = j * 6;
 
-      if (bb !== null) {
+      if (kind === 1) {
         // Slab method — line vs AABB. tEnter/tExit converge to the
         // intersection range across the three axis slabs; reject if the
         // range is empty or fully behind the ray origin. Branch on
         // axis === 0 to dodge 0·Inf=NaN at slab-aligned origins; the
         // taken path is rare for non-axis-aligned ray batches and the
         // predictor handles it cheaply.
-        const ip = item.position;
-        const dxMin = ip[0] - bb[0] - ox;
-        const dxMax = ip[0] + bb[0] - ox;
+        const dxMin = _cullData[base];
+        const dxMax = _cullData[base + 1];
         let tEnter, tExit;
         if (dx === 0) {
           if (dxMin > 0 || dxMax < 0) continue;
@@ -455,8 +616,8 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
           tEnter = t1 < t2 ? t1 : t2;
           tExit  = t1 < t2 ? t2 : t1;
         }
-        const dyMin = ip[1] - bb[1] - oy;
-        const dyMax = ip[1] + bb[1] - oy;
+        const dyMin = _cullData[base + 2];
+        const dyMax = _cullData[base + 3];
         if (dy === 0) {
           if (dyMin > 0 || dyMax < 0) continue;
         } else {
@@ -465,8 +626,8 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
           if (tlo > tEnter) tEnter = tlo;
           if (thi < tExit)  tExit  = thi;
         }
-        const dzMin = ip[2] - bb[2] - oz;
-        const dzMax = ip[2] + bb[2] - oz;
+        const dzMin = _cullData[base + 4];
+        const dzMax = _cullData[base + 5];
         if (dz === 0) {
           if (dzMin > 0 || dzMax < 0) continue;
         } else {
@@ -476,28 +637,22 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
           if (thi < tExit)  tExit  = thi;
         }
         if (tEnter > tExit || tExit < 0) continue;
-        _candidates[nc++] = item;
-        continue;
-      }
-
-      if (r === null) {
-        _candidates[nc++] = item;
+        _candidates[nc++] = _cullItems[j];
         continue;
       }
 
       // Line-sphere — project the item's center onto the ray, check the
       // closest-point distance against the bounding radius.
-      const ip = item.position;
-      const cx = ip[0] - ox;
-      const cy = ip[1] - oy;
-      const cz = ip[2] - oz;
+      const cx = _cullData[base];
+      const cy = _cullData[base + 1];
+      const cz = _cullData[base + 2];
       const tProj = cx * dx + cy * dy + cz * dz;
-      if (tProj < -r) continue;                        // sphere fully behind ray origin
+      if (tProj < -_cullData[base + 4]) continue;      // sphere fully behind ray origin
       const ex = cx - tProj * dx;
       const ey = cy - tProj * dy;
       const ez = cz - tProj * dz;
-      if (ex * ex + ey * ey + ez * ez > r * r) continue;  // ray misses sphere
-      _candidates[nc++] = item;
+      if (ex * ex + ey * ey + ez * ez > _cullData[base + 3]) continue;  // ray misses sphere
+      _candidates[nc++] = _cullItems[j];
     }
 
     marchRay(ox, oy, oz, dx, dy, dz, _candidates, nc,
@@ -509,6 +664,7 @@ export const trace = ({ origin, directions }, scene, lighting = DEFAULT_LIGHTING
   // comments for rationale.
   _candidates.length = 0;
   _inside.length     = 0;
+  _cullItems.length  = 0;
 
   return _outBuffer;
 };

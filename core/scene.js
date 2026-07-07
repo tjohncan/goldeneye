@@ -239,6 +239,30 @@ export const cylinderSDF = (halfHeight, radius) => (px, py, pz) => {
 };
 
 /**
+ * Triangular prism — gable-roof shape. Ridge runs along the X axis at
+ * height `height` above the local origin; the rectangular base spans
+ * ±halfX × ±halfZ in the y=0 plane. Cross-section in (Y, Z) is an
+ * isosceles triangle: apex at (height, 0), base corners at (0, ±halfZ).
+ *
+ * Built as an intersection of half-spaces (two roof faces, base plane,
+ * two X caps), so the outside distance is understated in edge/corner
+ * regions (max of plane distances lower-bounds the true distance) —
+ * safe for the marcher, which never overshoots on an understated SDF.
+ */
+/** @type {(halfX: number, halfZ: number, height: number) => SDF} */
+export const triPrismSDF = (halfX, halfZ, height) => {
+  const invL = 1 / Math.hypot(height, halfZ);
+  const ny = halfZ * invL, nz = height * invL;   // roof-face outward normal (Y, |Z|)
+  const apexD = height * ny;                     // face-plane offset through the apex
+  return (px, py, pz) => {
+    const dFace = py * ny + Math.abs(pz) * nz - apexD;
+    const dBase = -py;
+    const dCaps = Math.abs(px) - halfX;
+    return Math.max(dFace, dBase, dCaps);
+  };
+};
+
+/**
  * Open-top bowl: a thin spherical shell (between innerR and outerR) that
  * exists only below Y = rimY. Above the rim there is no wall — air
  * continues upward, so a viewer inside the bowl can look up through the

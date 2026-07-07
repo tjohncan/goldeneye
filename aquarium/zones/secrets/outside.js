@@ -10,13 +10,21 @@
 // ramp, leaving plenty of horizontal room for boats, rocks, roads,
 // etc. in later iterations.
 //
-// First-pass architecture: dome shell + linear ground slope + shack
-// (the building we exit, with the bore cut through it) + keyhole +
-// brass plates + brass knobs + region veils.
+// Architecture: dome shell + heightfield ground + shack (the building
+// we exit, with the bore cut through it, now wearing a gabled roof) +
+// keyhole + brass plates + brass knobs + region veils — plus the LIVING
+// COVE layered on through the asset modules: mountains + mesa
+// (mountains.js), fishing village / lighthouse / trees / dock
+// (village.js), the wandering sloop + buoy (harbor.js), orca + shark +
+// octopus underwater (seaLife.js), the goldfish zeppelin + perching
+// sky-goldfish flock (skyLife.js), and the mountain-to-mountain
+// railway (train.js — track and tunnel mouths painted, not modeled).
+// Animated assets hand back per-frame update callbacks, which
+// addToScene returns for world.js to thread into the main tick.
 
 import {
   registerItem,
-  sphereSDF, boxSDF,
+  sphereSDF, boxSDF, triPrismSDF,
   cutSDF, cutSDFCullableBox, unionSDF,
   translateSDF,
 } from '../../../core/scene.js';
@@ -39,6 +47,11 @@ import {
 } from './chamber.js';
 import { sampleClouds }    from '../../assets/clouds.js';
 import * as mountains      from '../../assets/mountains.js';
+import * as village        from '../../assets/village.js';
+import * as harbor         from '../../assets/harbor.js';
+import * as seaLife        from '../../assets/seaLife.js';
+import * as skyLife        from '../../assets/skyLife.js';
+import * as train          from '../../assets/train.js';
 import { frameTimeSec }    from '../../../core/tracer.js';
 import { MIN_TRAVERSAL_OVERLAP, FISH_RADIUS } from '../../physics.js';
 
@@ -336,17 +349,38 @@ const groundHeight = (px, pz) => {
   if (r < PLATEAU_R) return SHACK_PLATEAU_Y;
   // Cove side (+Z): plateau → shallow seafloor → deep seafloor as r grows.
   if (pz > 0) {
-    if (r > DEEP_SEA_R) return DEEP_SEA_Y;
-    if (r > BEACH_END_R) {
+    let seaY;
+    if (r > DEEP_SEA_R) {
+      seaY = DEEP_SEA_Y;
+    } else if (r > BEACH_END_R) {
       // Past beach: smooth slope shallow → deep.
       const t = (r - BEACH_END_R) / (DEEP_SEA_R - BEACH_END_R);
       const tSmooth = t * t * (3 - 2 * t);
-      return SEA_FLOOR_Y * (1 - tSmooth) + DEEP_SEA_Y * tSmooth;
+      seaY = SEA_FLOOR_Y * (1 - tSmooth) + DEEP_SEA_Y * tSmooth;
+    } else {
+      // Beach: plateau → shallow seafloor.
+      const t = (r - PLATEAU_R) / (BEACH_END_R - PLATEAU_R);
+      const tSmooth = t * t * (3 - 2 * t);
+      seaY = SHACK_PLATEAU_Y * (1 - tSmooth) + SEA_FLOOR_Y * tSmooth;
     }
-    // Beach: plateau → shallow seafloor.
-    const t = (r - PLATEAU_R) / (BEACH_END_R - PLATEAU_R);
-    const tSmooth = t * t * (3 - 2 * t);
-    return SHACK_PLATEAU_Y * (1 - tSmooth) + SEA_FLOOR_Y * tSmooth;
+    // Azimuthal seam blend: the two hemispheres used to MEET at a
+    // DISCONTINUOUS cliff along z = 0 (plateau at -13 against seafloor
+    // down to -180). A heightfield SDF is unusable next to a height
+    // discontinuity — a point just seaward of the seam reads "floor is
+    // 40 below" while the plateau wall stands a hand-width away — so
+    // the marcher overstepped through the wall (flickering blocky
+    // edges at the ledge) and physics ejected along garbage gradients
+    // (the pop-up-onto-the-grass effect). Blending to the plateau over
+    // a band that WIDENS with |px| keeps the bluff's slope bounded
+    // (≤ ~0.58 at the deep end) at every radius: continuous headland
+    // bluffs instead of a razor seam.
+    const band = 0.7 * Math.abs(px) + 15;
+    if (pz < band) {
+      const t = pz / band;
+      const s = t * t * (3 - 2 * t);
+      return SHACK_PLATEAU_Y * (1 - s) + seaY * s;
+    }
+    return seaY;
   }
   // Mountain side (-Z): plateau extends all the way to the dome wall.
   // Mountains rise from this plateau as their own items.
@@ -362,8 +396,15 @@ const groundHeight = (px, pz) => {
 // beneath. Both items are collides:false — fish swims through.
 const WATER_HALF_X    = 1000;
 const WATER_HALF_Y    = 0.05;
-const WATER_HALF_Z    = 460;                   // half-depth of cove water
-const WATER_CENTER_Z  = +540;                  // pushed +Z so the slab spans z ≈ [80, 1000]
+// Slab spans z ∈ [0, 1000]: the WHOLE +Z hemisphere. The waterline
+// circle (ground crossing sea level at r ≈ 98) swings down to z ≈ 0
+// on the cove's ±X flanks — the first draft started the slab at
+// z = 80, which left a below-sea-level sand strip on each flank with
+// no water over it and the slab's sheer side face standing as a
+// glass wall at its end (with the fog box's cut face as a shadow
+// under it). The z = 0 edge buries under the plateau, never seen.
+const WATER_HALF_Z    = 500;
+const WATER_CENTER_Z  = +500;
 // Underwater fog box — large translucent volume below the water surface
 // in the cove hemisphere. Camera below sea level picks up the tint at
 // step zero. Top at sea level, bottom well below the deep seafloor (so
@@ -435,6 +476,24 @@ const backWindowGlassSdf  = boxSDF([
   BACK_WINDOW_GLASS_HZ,
 ]);
 const backWindowSdf = unionSDF(backWindowFrameSdf, backWindowGlassSdf);
+
+// Shack roof — gabled prism capping the flat building top, ridge along
+// X, eaves overhanging the walls by 2, with a brick chimney on the
+// +X/+Z quarter. Sits ON the house shell (base plane flush at
+// +HOUSE_HALF_Y); solid wedge, so it adds no route into the interior.
+// Item origin at mid-rise for a centered AABB.
+const ROOF_HALF_X  = HOUSE_HALF_X + 2;
+const ROOF_HALF_Z  = HOUSE_HALF_Z + 2;
+const ROOF_RISE    = 14;
+const ROOF_BASE_Y  = HOUSE_HALF_Y;              // world 19
+const ROOF_MID_Y   = ROOF_BASE_Y + ROOF_RISE / 2;
+const CHIMNEY_X    = 18, CHIMNEY_Z = 8;         // roof-local = world (item at x/z 0)
+const shackRoofSdf = unionSDF(
+  translateSDF([0, -ROOF_RISE / 2, 0], triPrismSDF(ROOF_HALF_X, ROOF_HALF_Z, ROOF_RISE)),
+  translateSDF([CHIMNEY_X, 4.6, CHIMNEY_Z], boxSDF([1.6, 3.6, 1.6])),
+);
+// Chimney top (world) — exported shape math for the perch below.
+const CHIMNEY_TOP_Y = ROOF_MID_Y + 4.6 + 3.6;   // 34.2
 
 // House exterior cut: keyhole bore + the secret zones' air shapes (so
 // the wall has air where the mousehole pocket and chamber pocket live,
@@ -643,18 +702,96 @@ const firmamentColorFn = (lpx, lpy, lpz) => {
   return [r * c, g * c, b * c];
 };
 
+// Seabed + beach dressing — scallop shells, starfish, coral heads,
+// and dark stones scattered across the sand, painted from a jittered
+// cell hash (the clouds.js trick, grounded): zero Items, cost only at
+// sand-level ground hits, ~1 in 7 cells carries a feature. Coral
+// keeps to properly underwater depths; shells and starfish wash all
+// the way up the beach.
+const _decorHash = (a, b, c) => {
+  const x = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453;
+  return x - Math.floor(x);
+};
+const DECOR_CELL = 16;
+const seabedDecor = (lpx, lpy, lpz) => {
+  const cx = Math.floor(lpx / DECOR_CELL), cz = Math.floor(lpz / DECOR_CELL);
+  if (_decorHash(cx, cz, 1) > 0.15) return null;
+  const fx = (cx + 0.3 + _decorHash(cx, cz, 2) * 0.4) * DECOR_CELL;
+  const fz = (cz + 0.3 + _decorHash(cx, cz, 3) * 0.4) * DECOR_CELL;
+  const dx = lpx - fx, dz = lpz - fz;
+  const d2 = dx * dx + dz * dz;
+  if (d2 > 16) return null;
+  const kind = _decorHash(cx, cz, 4);
+  if (kind < 0.30) {
+    // Scallop shell — cream with radial ribs.
+    if (d2 > 2.1) return null;
+    const rib = Math.floor((Math.atan2(dz, dx) + Math.PI) * 2.23) & 1;
+    return rib === 0 ? [238, 228, 206] : [214, 200, 176];
+  }
+  if (kind < 0.55) {
+    // Starfish — five arms around a core, rotated per cell.
+    const arm = Math.cos(5 * Math.atan2(dz, dx) + _decorHash(cx, cz, 5) * 6.28);
+    const rad = 0.6 + (arm > 0 ? 1.4 * arm * arm : 0);
+    if (d2 > rad * rad) return null;
+    return [206, 112, 66];
+  }
+  if (kind < 0.80 && lpy < SHACK_PLATEAU_Y - 14) {
+    // Coral head — pink mottle, underwater only.
+    if (d2 > 7.8) return null;
+    const mottle = Math.sin(lpx * 2.1) * Math.cos(lpz * 1.9);
+    return mottle > 0.35 ? [216, 96, 96] : [174, 64, 74];
+  }
+  // Dark sea stone.
+  if (d2 > 4.6) return null;
+  const shade = Math.sin(lpx * 1.3 + lpz * 0.9) * 8;
+  return [96 + shade, 96 + shade, 102 + shade];
+};
+
 // Ground strata, keyed off world Y relative to the shack plateau:
 // deep seafloor sand below; lighter sand mid; beach tan right at the
 // plateau line; grass green just above; brown dirt higher; pale gray
 // rock past that. The mid-and-darker bands now read as the cove's
 // underwater seafloor and beach, since the +Z hemisphere groundHeight
-// slopes through them.
+// slopes through them. Band boundaries BLEND over a few units of
+// height — the original hard switches drew contour lines ("creases")
+// across the seafloor wherever a boundary crossed the view through
+// the fog.
+//
+// Linear color blend for the strata transitions below.
+const _mix = (a, b, t) => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
+//
+// Plateau-level hits first consult the painted infrastructure — the
+// railway ribbon (train.js's paintTrack) and the village lane
+// (village.js's paintLane) — rails, sleepers, ballast, ruts, all
+// painted straight onto the ground, zero extra Items. The height
+// guard keeps every non-plateau ground hit (beach, seafloor) to a
+// single comparison.
 const groundColorFn = (lpx, lpy, lpz) => {
-  if (lpy < SHACK_PLATEAU_Y - 25) return [180, 165, 130];
-  if (lpy < SHACK_PLATEAU_Y - 10) return [200, 185, 150];
-  if (lpy < SHACK_PLATEAU_Y)      return [225, 205, 145];
-  if (lpy < SHACK_PLATEAU_Y + 5)  return [85, 130, 60];
-  if (lpy < SHACK_PLATEAU_Y + 20) return [115, 100, 75];
+  if (lpy > SHACK_PLATEAU_Y - 1.5) {
+    const track = train.paintTrack(lpx, lpz);
+    if (track !== null) return track;
+    const lane = village.paintLane(lpx, lpz);
+    if (lane !== null) return lane;
+  } else if (lpy < SHACK_PLATEAU_Y - 4) {
+    // Sand levels (beach + seabed) get the scattered dressing.
+    const decor = seabedDecor(lpx, lpy, lpz);
+    if (decor !== null) return decor;
+  }
+  const h = lpy - SHACK_PLATEAU_Y;
+  if (h < -27)  return [180, 165, 130];
+  if (h < -23)  return _mix([180, 165, 130], [200, 185, 150], (h + 27) / 4);
+  if (h < -12)  return [200, 185, 150];
+  if (h < -8)   return _mix([200, 185, 150], [225, 205, 145], (h + 12) / 4);
+  if (h < -0.5) return [225, 205, 145];
+  if (h < 1.5)  return _mix([225, 205, 145], [85, 130, 60], (h + 0.5) / 2);
+  if (h < 4)    return [85, 130, 60];
+  if (h < 7)    return _mix([85, 130, 60], [115, 100, 75], (h - 4) / 3);
+  if (h < 18)   return [115, 100, 75];
+  if (h < 24)   return _mix([115, 100, 75], [200, 200, 205], (h - 18) / 6);
   return [200, 200, 205];
 };
 
@@ -753,6 +890,26 @@ const backWindowColorFn = (lpx, lpy, lpz) => {
   return [60, 40, 25];                                   // wall-facing back / sides
 };
 
+// Shack roof: slate shingle rows on the slopes, plank-striped wood at
+// the gable ends, brick chimney with a dark cap. Roof is axis-aligned
+// so no un-rotation needed; lpy is relative to ROOF_MID_Y.
+const shackRoofColorFn = (lpx, lpy, lpz) => {
+  const onChimney = Math.abs(lpx - CHIMNEY_X) < 1.7 && Math.abs(lpz - CHIMNEY_Z) < 1.7
+                 && lpy > 2.0;
+  if (onChimney) {
+    if (lpy > 7.6) return [70, 60, 58];                  // cap
+    const course = Math.floor(lpy * 1.4) & 1;
+    return course === 0 ? [148, 74, 56] : [128, 62, 48];
+  }
+  if (Math.abs(lpx) > ROOF_HALF_X - 0.2) {               // gable ends
+    const plank = Math.floor(lpy * 1.6) & 1;
+    return plank === 0 ? [104, 68, 42] : [88, 56, 34];
+  }
+  const wave = Math.sin(lpx * 0.9) * 5;
+  const row  = Math.floor((ROOF_RISE / 2 - lpy) / 1.1) & 1;
+  return row === 0 ? [94 + wave, 78 + wave, 68] : [78 + wave, 64 + wave, 56];
+};
+
 
 // ─────────────────────────── scene build ───────────────────────────
 
@@ -760,11 +917,16 @@ const backWindowColorFn = (lpx, lpy, lpz) => {
  * Add the outside zone to the scene. Carves the keyhole bore through
  * the caller-supplied kitchen `door` and `room` handles.
  *
+ * Returns the animated assets' per-frame update callbacks (sloop,
+ * sea creatures, zeppelin + flock) for world.js to append to the
+ * scene's perFrameUpdates — the same contract as the bubble pump.
+ *
  * @param {import('../../../core/scene.js').Scene} scene
  * @param {{
  *   room: import('../kitchen.js').KitchenHandle,
  *   door: import('../kitchen.js').KitchenHandle,
  * }} kitchen   Handles to kitchen surfaces this zone extends.
+ * @returns {{ updates: Array<(timeMs: number) => void> }}
  */
 export const addToScene = (scene, { room: kitchenRoom, door }) => {
   const add = (item) => registerItem(scene, { ...item, regionKey: REGION_OUTSIDE });
@@ -866,20 +1028,27 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
 
   // Ground base curve — heightfield with a +Z-hemisphere beach slope
   // and a flat -Z-hemisphere plateau (mountains will rise from the
-  // plateau as separate items). * 0.6 keeps the SDF conservative for
-  // the marcher (beach slope's max grad ≈ (PLATEAU_Y - SEA_FLOOR_Y) /
-  // (BEACH_END_R - PLATEAU_R) ≈ 37/100 = 0.37; safety factor 0.6 sits
-  // well under 1/sqrt(1 + 0.37²) ≈ 0.94).
+  // plateau as separate items).
   //
-  // Short-circuit for points well above the plateau: groundHeight never
-  // exceeds SHACK_PLATEAU_Y (the +Z hemisphere slopes DOWN to seafloor;
-  // the -Z hemisphere is plateau-flat). Sky-bound rays read this branch
-  // and skip the sqrt + smoothstep entirely. The +5 buffer keeps the
-  // shortcut SDF >= the true SDF at the boundary so the marcher never
-  // overshoots — the 0.6 multiplier already provides Lipschitz slack.
+  // Above-plateau branch is EXACT (scale 1): every surface point sits
+  // at y ≤ SHACK_PLATEAU_Y (the +Z hemisphere only slopes DOWN), so a
+  // point h above the plateau is at least h from ALL ground — vertical
+  // separation alone is a true lower bound, never an overestimate.
+  // This matters for grazing rays crossing the plateau toward the
+  // mountains: at the old 0.6 scale they crept and exhausted the step
+  // budget, leaking a background-colored band along the land horizon.
+  // The +5 buffer is LOAD-BEARING for hits, not just slack: without
+  // it, a ray crossing the plateau's y-level out over the +Z sea would
+  // read SDF ≈ 0 and phantom-hit mid-air where no ground exists — the
+  // buffer hands the last 5 units of approach to the true heightfield.
+  //
+  // Below-plateau branch scales by 0.75: the radial slope peaks at the
+  // beach smoothstep's 0.56 and the flank-bluff azimuthal blend adds
+  // up to ~0.58 orthogonally — combined magnitude ≈ 0.8, Lipschitz-
+  // safe bound 1/sqrt(1 + 0.8²) ≈ 0.78; 0.75 keeps margin.
   const groundSdf = (px, py, pz) => {
-    if (py > SHACK_PLATEAU_Y + 5) return (py - SHACK_PLATEAU_Y) * 0.6;
-    return (py - groundHeight(px, pz)) * 0.6;
+    if (py > SHACK_PLATEAU_Y + 5) return py - SHACK_PLATEAU_Y;
+    return (py - groundHeight(px, pz)) * 0.75;
   };
   add({
     name:     'outside-ground',
@@ -923,6 +1092,55 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     opacity:  0.25,
     collides: false,
     boundingBox: [FOG_HALF_X, FOG_HALF_Y, FOG_HALF_Z],
+  });
+
+  // Shoreline ring — a sandy torus hugging the waterline circle with
+  // its crown just breaking the surface: reads as the wet-sand berm +
+  // foam line the beach was missing. It's ALSO load-bearing geometry:
+  // where the rising beach meets the water plane's underside they form
+  // an acute wedge, and rays grazing into that corner creep until the
+  // step budget dies (no epsilon rescues an acute corner) — from
+  // underwater that painted a pale band along the shore. The torus
+  // plugs the wedge, so those rays hit sand/foam instead. Full circle:
+  // the -Z half is buried under the plateau and never renders. The
+  // tiny AABB half-height means only water-level rays ever test it.
+  const SHORE_RING_R  = 98;                    // waterline radius (ground = -25)
+  const SHORE_TUBE_R  = 3.2;
+  const SHORE_RING_Y  = SEA_LEVEL_Y - 1.5;
+  const shoreRingSdf = (px, py, pz) => {
+    const rr = Math.hypot(px, pz) - SHORE_RING_R;
+    return Math.hypot(rr, py) - SHORE_TUBE_R;
+  };
+  const shoreRingColorFn = (lpx, lpy, lpz) => {
+    if (lpy > 2.1) return [238, 234, 222];     // foam crown, above the waterline
+    if (lpy > 0.4) return [205, 188, 148];     // wet sand at the waterline
+    return [188, 172, 136];                    // submerged toe
+  };
+  add({
+    name:     'shoreline-foam',
+    color:    [205, 188, 148],
+    colorFn:  shoreRingColorFn,
+    position: [0, SHORE_RING_Y, 0],
+    sdf:      shoreRingSdf,
+    collides: false,
+    boundingBox: [SHORE_RING_R + SHORE_TUBE_R + 0.3, SHORE_TUBE_R + 0.3,
+                  SHORE_RING_R + SHORE_TUBE_R + 0.3],
+  });
+
+  // Bowl-rim skirt — a sand bank filling the acute wedge where the
+  // deep seafloor meets the dome's inward-curving wall. Same disease
+  // as the shoreline wedge at a bigger radius: rays grazing into that
+  // ring-shaped corner from altitude striped the far water with
+  // concentric step-outcome bands (crop circles, per the aerial
+  // survey). The skirt hands them an honest surface. Thin-Y AABB
+  // keeps it out of every ray that isn't aimed at the deep rim.
+  const RIM_R = 985, RIM_TUBE = 22, RIM_Y = -180;
+  add({
+    name:     'bowl-rim-skirt',
+    color:    [172, 158, 126],
+    position: [0, RIM_Y, 0],
+    sdf:      (px, py, pz) => Math.hypot(Math.hypot(px, pz) - RIM_R, py) - RIM_TUBE,
+    boundingBox: [RIM_R + RIM_TUBE + 0.5, RIM_TUBE + 0.5, RIM_R + RIM_TUBE + 0.5],
   });
 
   // House exterior — the visible building from the cove. Wraps the
@@ -986,10 +1204,53 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     boundingBox: VEIL_BOUND_HALF,
   });
 
-  // Mountain range + foothill — registered via the same outside-tagged
-  // `add` helper so mountain items participate in the cove's region
-  // cull. mountains.js owns layout + colorFn; outside.js hands the
-  // helper through plus the cove's plateau elevation (single source
-  // of truth for ground Y).
-  mountains.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
+  // Shack roof — gabled cap with chimney. Registered here (not in
+  // village.js) because it's part of the building this zone owns.
+  add({
+    name:     'shack-roof',
+    color:    [94, 78, 68],
+    colorFn:  shackRoofColorFn,
+    position: [0, ROOF_MID_Y, 0],
+    sdf:      shackRoofSdf,
+    boundingBox: [ROOF_HALF_X + 0.1, ROOF_RISE / 2 + 1.3, ROOF_HALF_Z + 0.1],
+  });
+
+  // ── the living cove ──
+  // Mountain range + mesa first (returns the mesa's surface geometry;
+  // takes the railway's tunnel-mouth points to paint on the flanks),
+  // then the static village (returns the flock's perch list), then the
+  // animated assets. All registered through the same outside-tagged
+  // `add`, so everything participates in the cove's region cull and
+  // costs the kitchen-side regions nothing.
+  const { mesa } = mountains.addToScene(add, {
+    plateauY: SHACK_PLATEAU_Y,
+    tunnels:  train.TUNNEL_PORTALS,
+  });
+
+  const { perches } = village.addToScene(add, {
+    plateauY:  SHACK_PLATEAU_Y,
+    seaLevelY: SEA_LEVEL_Y,
+    mesa,
+  });
+
+  // Shack perches: both ends of the roof ridge (one facing the sea,
+  // one the village), the chimney top, and — the closest seat in the
+  // house — the outside brass doorknob. Approach corridors: straight
+  // down from above for the roofline; out along +Z for the knob so the
+  // glide never crosses the door face.
+  perches.push(
+    { x: -14, y: ROOF_BASE_Y + ROOF_RISE + 0.45, z: 0, yaw: Math.PI, ax: 0, ay: 12, az: 0 },
+    { x: +14, y: ROOF_BASE_Y + ROOF_RISE + 0.45, z: 0, yaw: 0,       ax: 0, ay: 12, az: 0 },
+    { x: CHIMNEY_X, y: CHIMNEY_TOP_Y + 0.42, z: CHIMNEY_Z, yaw: 0,   ax: 0, ay: 10, az: 0 },
+    { x: KEYHOLE_X, y: -0.59, z: OUTSIDE_KNOB_Z, yaw: 0,             ax: 0, ay: 3, az: 14 },
+  );
+
+  const harborLife = harbor.addToScene(add, { seaLevelY: SEA_LEVEL_Y });
+  const swimmers   = seaLife.addToScene(add, { floorY: groundHeight });
+  const flyers     = skyLife.addToScene(add, { perches });
+  const railway    = train.addToScene(add, { plateauY: SHACK_PLATEAU_Y });
+
+  return {
+    updates: [harborLife.update, swimmers.update, flyers.update, railway.update],
+  };
 };

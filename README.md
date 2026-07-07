@@ -23,6 +23,11 @@ node serve.js
 # ( note: any other static file server works too;
 # ... it's just a single-page HTML doc linking JS )
 # then: open http://localhost:8080/ in your favorite browser.
+# optional quality levers: ?res=96 (render grid, 32..128; defaults to
+# 88 on desktop pointers, 64 on touch devices; cost ~res²) and ?fps=20
+# (frame cap, 4..24, default 13) — e.g. localhost:8080/?res=96&fps=20 .
+# The pair is budget-guarded together (max grid auto-limits fps) so no
+# combination can cook your laptop.
 ```
 
 ## Layout
@@ -44,6 +49,8 @@ node serve.js
     - `secrets/` — additional *hidden locales* to hunt
   - `assets/` — separate content modules for complex items
     - `bubblePump.js` — pool of rising bubbles
+    - ... plus the modules certain *hidden locales* draw their scenery
+      and wildlife from (no spoilers in a README)
   - `controls.js` — pointer-based 3D swimming
   - `physics.js` — SDF-gradient collision sliding
   - `fpsThrottle.js` — render-loop FPS cap
