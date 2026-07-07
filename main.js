@@ -22,7 +22,15 @@ import { throttle }              from './aquarium/fpsThrottle.js';
 // maxing one lever automatically reins in the other — curiosity about
 // big numbers shouldn't cook anyone's laptop.
 const params      = new URLSearchParams(location.search);
-const RES         = Math.min(128, Math.max(32, Number(params.get('res')) || 64));
+// Default grid is device-aware: 88 where the pointer is fine (a
+// desktop absorbs the ~1.9× cost of the richer grid without breaking
+// the 13 fps budget), 64 where it's coarse — average mobile pays the
+// res² twice (rays AND painted cells) and stays honest at the classic
+// grid. An explicit ?res= always wins.
+const FINE_POINTER = typeof matchMedia === 'function'
+  && matchMedia('(pointer: fine)').matches;
+const RES         = Math.min(128, Math.max(32,
+  Number(params.get('res')) || (FINE_POINTER ? 88 : 64)));
 const SCREEN_W    = RES;
 const SCREEN_H    = RES;
 const LENS_POINTS = Math.round(6400 * (RES / 64) * (RES / 64));
