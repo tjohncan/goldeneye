@@ -349,17 +349,38 @@ const groundHeight = (px, pz) => {
   if (r < PLATEAU_R) return SHACK_PLATEAU_Y;
   // Cove side (+Z): plateau → shallow seafloor → deep seafloor as r grows.
   if (pz > 0) {
-    if (r > DEEP_SEA_R) return DEEP_SEA_Y;
-    if (r > BEACH_END_R) {
+    let seaY;
+    if (r > DEEP_SEA_R) {
+      seaY = DEEP_SEA_Y;
+    } else if (r > BEACH_END_R) {
       // Past beach: smooth slope shallow → deep.
       const t = (r - BEACH_END_R) / (DEEP_SEA_R - BEACH_END_R);
       const tSmooth = t * t * (3 - 2 * t);
-      return SEA_FLOOR_Y * (1 - tSmooth) + DEEP_SEA_Y * tSmooth;
+      seaY = SEA_FLOOR_Y * (1 - tSmooth) + DEEP_SEA_Y * tSmooth;
+    } else {
+      // Beach: plateau → shallow seafloor.
+      const t = (r - PLATEAU_R) / (BEACH_END_R - PLATEAU_R);
+      const tSmooth = t * t * (3 - 2 * t);
+      seaY = SHACK_PLATEAU_Y * (1 - tSmooth) + SEA_FLOOR_Y * tSmooth;
     }
-    // Beach: plateau → shallow seafloor.
-    const t = (r - PLATEAU_R) / (BEACH_END_R - PLATEAU_R);
-    const tSmooth = t * t * (3 - 2 * t);
-    return SHACK_PLATEAU_Y * (1 - tSmooth) + SEA_FLOOR_Y * tSmooth;
+    // Azimuthal seam blend: the two hemispheres used to MEET at a
+    // DISCONTINUOUS cliff along z = 0 (plateau at -13 against seafloor
+    // down to -180). A heightfield SDF is unusable next to a height
+    // discontinuity — a point just seaward of the seam reads "floor is
+    // 40 below" while the plateau wall stands a hand-width away — so
+    // the marcher overstepped through the wall (flickering blocky
+    // edges at the ledge) and physics ejected along garbage gradients
+    // (the pop-up-onto-the-grass effect). Blending to the plateau over
+    // a band that WIDENS with |px| keeps the bluff's slope bounded
+    // (≤ ~0.58 at the deep end) at every radius: continuous headland
+    // bluffs instead of a razor seam.
+    const band = 0.7 * Math.abs(px) + 15;
+    if (pz < band) {
+      const t = pz / band;
+      const s = t * t * (3 - 2 * t);
+      return SHACK_PLATEAU_Y * (1 - s) + seaY * s;
+    }
+    return seaY;
   }
   // Mountain side (-Z): plateau extends all the way to the dome wall.
   // Mountains rise from this plateau as their own items.
@@ -731,7 +752,17 @@ const seabedDecor = (lpx, lpy, lpz) => {
 // plateau line; grass green just above; brown dirt higher; pale gray
 // rock past that. The mid-and-darker bands now read as the cove's
 // underwater seafloor and beach, since the +Z hemisphere groundHeight
-// slopes through them.
+// slopes through them. Band boundaries BLEND over a few units of
+// height — the original hard switches drew contour lines ("creases")
+// across the seafloor wherever a boundary crossed the view through
+// the fog.
+//
+// Linear color blend for the strata transitions below.
+const _mix = (a, b, t) => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
 //
 // Plateau-level hits first consult the painted infrastructure — the
 // railway ribbon (train.js's paintTrack) and the village lane
@@ -750,11 +781,17 @@ const groundColorFn = (lpx, lpy, lpz) => {
     const decor = seabedDecor(lpx, lpy, lpz);
     if (decor !== null) return decor;
   }
-  if (lpy < SHACK_PLATEAU_Y - 25) return [180, 165, 130];
-  if (lpy < SHACK_PLATEAU_Y - 10) return [200, 185, 150];
-  if (lpy < SHACK_PLATEAU_Y)      return [225, 205, 145];
-  if (lpy < SHACK_PLATEAU_Y + 5)  return [85, 130, 60];
-  if (lpy < SHACK_PLATEAU_Y + 20) return [115, 100, 75];
+  const h = lpy - SHACK_PLATEAU_Y;
+  if (h < -27)  return [180, 165, 130];
+  if (h < -23)  return _mix([180, 165, 130], [200, 185, 150], (h + 27) / 4);
+  if (h < -12)  return [200, 185, 150];
+  if (h < -8)   return _mix([200, 185, 150], [225, 205, 145], (h + 12) / 4);
+  if (h < -0.5) return [225, 205, 145];
+  if (h < 1.5)  return _mix([225, 205, 145], [85, 130, 60], (h + 0.5) / 2);
+  if (h < 4)    return [85, 130, 60];
+  if (h < 7)    return _mix([85, 130, 60], [115, 100, 75], (h - 4) / 3);
+  if (h < 18)   return [115, 100, 75];
+  if (h < 24)   return _mix([115, 100, 75], [200, 200, 205], (h - 18) / 6);
   return [200, 200, 205];
 };
 
@@ -1005,13 +1042,13 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
   // read SDF ≈ 0 and phantom-hit mid-air where no ground exists — the
   // buffer hands the last 5 units of approach to the true heightfield.
   //
-  // Below-plateau branch scales by 0.8: the steepest heightfield
-  // gradient is the beach smoothstep's peak 1.5·37/100 ≈ 0.56 (the
-  // deep-sea ramp is gentler), giving a Lipschitz-safe bound of
-  // 1/sqrt(1 + 0.56²) ≈ 0.87; 0.8 keeps margin.
+  // Below-plateau branch scales by 0.75: the radial slope peaks at the
+  // beach smoothstep's 0.56 and the flank-bluff azimuthal blend adds
+  // up to ~0.58 orthogonally — combined magnitude ≈ 0.8, Lipschitz-
+  // safe bound 1/sqrt(1 + 0.8²) ≈ 0.78; 0.75 keeps margin.
   const groundSdf = (px, py, pz) => {
     if (py > SHACK_PLATEAU_Y + 5) return py - SHACK_PLATEAU_Y;
-    return (py - groundHeight(px, pz)) * 0.8;
+    return (py - groundHeight(px, pz)) * 0.75;
   };
   add({
     name:     'outside-ground',
