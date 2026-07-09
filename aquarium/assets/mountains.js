@@ -104,7 +104,7 @@ const makeMountainSdf = ({ peaks, noiseSeed, peakH, sdfScale, tunnels }) => {
   // so the raw surface writhes and shreds the arch edge; flattening it
   // there also gentles the gradient (marcher-safe by construction).
   const mouths = tunnels || null;
-  const NOISE_CLEAR = 42;
+  const NOISE_CLEAR = 52;   // wide enough to smooth under the tallest arch (climbs ~47 up-bore)
   return (lpx, lpy, lpz) => {
     const lpyBase = lpy + yOff;
     let surfaceMax = 0;
@@ -174,20 +174,27 @@ const makeMountainColorFn = ({ hasSnow, noiseSeed, base_y, peakH, tunnels }) => 
         const tn = tunnels[i];
         const dx = lpx - tn[0];
         const dz = lpz - tn[2];
-        if (dx * dx + dz * dz > 1500) continue;
+        if (dx * dx + dz * dz > 2500) continue;   // must contain the up-slope reach
         // Tunnel-arch profile, anchored at rail level and STRETCHED
         // up-slope along the bore axis (tn[3..4], toward the mountain
         // core): the mouth paints onto a skirt seen nearly edge-on from
         // the track, so a circular patch foreshortens to a dot — the
         // elongated footprint climbs the hillside and reads as a bore
-        // driven into it. Size + elongation are per-portal (tn[5..6])
-        // so a steeper skirt can carry a bigger, rounder mouth. Base
-        // profile: across-track half-width 15, crown ~21 over rails.
+        // driven into it. The skin RISES along the bore, so the TOP of
+        // the arch is where the profile stops climbing up-slope — reach
+        // ≈ 15·√(sizeScale²/elongCoeff) — landing on ever-higher skin,
+        // NOT a free-space crown height. A lower elongCoeff (tn[6])
+        // stretches further up the hill and so paints higher; sizeScale
+        // (tn[5]) scales both reach and across-track half-width (15·sm).
         const u = dx * tn[3] + dz * tn[4];     // along the bore axis
         const v = dz * tn[3] - dx * tn[4];     // across it
         const ay = lpy - tn[1] + 8;            // 0 at the rail base
         if (ay > -1.5) {
-          const dome = ay > 8 ? (ay - 8) * 1.15 : 0;
+          // crownRise delays the dome's onset, letting the arch keep
+          // climbing up-slope before it caps — on a steep skin that
+          // buys crown height indirectly (not 1:1 in world Y).
+          const rise = tn[7] || 0;
+          const dome = ay > 8 + rise ? (ay - 8 - rise) * 1.15 : 0;
           const p2 = v * v + u * u * tn[6] + dome * dome;
           const sm = tn[5] * tn[5];            // linear scale → area threshold
           if (p2 < 225 * sm) return [26, 24, 28];   // the dark bore
@@ -301,8 +308,8 @@ export const addToScene = (add, { plateauY, tunnels = [] }) => {
       const dx = tw[0] - cx, dz = tw[2] - cz;
       const d = Math.sqrt(dx * dx + dz * dz);
       if (d < m.baseR) {
-        // [dx, dy, dz, axisX, axisZ, sizeScale, elongCoeff]
-        myTunnels.push([dx, tw[1] - cy, dz, -dx / d, -dz / d, tw[3] ?? 1, tw[4] ?? 0.27]);
+        // [dx, dy, dz, axisX, axisZ, sizeScale, elongCoeff, crownRise]
+        myTunnels.push([dx, tw[1] - cy, dz, -dx / d, -dz / d, tw[3] ?? 1, tw[4] ?? 0.27, tw[5] ?? 0]);
       }
     }
     if (myTunnels.length > 0) m.tunnels = myTunnels;

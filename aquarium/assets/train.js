@@ -57,20 +57,28 @@ const TURN_A_TH = -127.5 * DEG;
 const TURN_B_TH = -62.0 * DEG;
 
 /** Tunnel-mouth portals, exported for mountains.js to paint dark
- *  arches on the flanks. Each entry: [x, y, z, sizeScale, elongCoeff].
- *  Y sits near the rail line so the mouth lands on visible skin. The
- *  two mountains have different skirt steepness, so each mouth is tuned
- *  independently:
- *   - matterhorn (LEFT, sharp horn): a steeper skirt made the shared
- *     slim profile read as a small slit ABOVE the track. Bigger
- *     (1.5×), rounder (elong 0.55 vs 0.27 — less up-slope stretch), and
- *     dropped to y=-9 so the bore centers on the ballast the train
- *     actually runs on.
- *   - mont-blanc (RIGHT, gentle ridge): the original slim profile
- *     reads well on its shallow slope; left as-is. */
+ *  arches on the flanks. Each entry:
+ *    [x, y, z, sizeScale, elongCoeff, crownRise]
+ *  Y sits near the rail line so the mouth lands on visible skin.
+ *
+ *  The mouth paints onto a STEEP heightfield slope, so the top of the
+ *  black arch is set by how far the profile climbs UP the skin, not by
+ *  a free-space height: up-slope reach ≈ 15·√(sizeScale²/elongCoeff),
+ *  and since the skin rises fast, a LOWER elongCoeff (more up-slope
+ *  stretch) buys real crown height. crownRise just delays the dome cap
+ *  so the arch can climb first. The arch must top the train's smoke
+ *  plume (peaks near world y +8; the solid chimney tops ~world −1):
+ *   - matterhorn (LEFT, sharp horn): 1.5×/0.55/crownRise 9 — its mouth
+ *     sits well INSIDE the foot (d≈352 < subR 380), so it already
+ *     climbs enough to cover the stack; reads fine.
+ *   - mont-blanc (RIGHT): its mouth anchors right at the foot (d≈293),
+ *     so the old slim-but-high-elong profile barely climbed and the
+ *     smoke towered over it. 1.65× with a LOW elong 0.22 (long up-slope
+ *     stretch) + crownRise 8 drive the crown up the skin to ~world +12,
+ *     clearing the plume. */
 export const TUNNEL_PORTALS = [
-  [TRACK_R * Math.cos(PORTAL_A_TH), -9, TRACK_R * Math.sin(PORTAL_A_TH), 1.5, 0.55],
-  [TRACK_R * Math.cos(PORTAL_B_TH), -5, TRACK_R * Math.sin(PORTAL_B_TH), 1.0, 0.27],
+  [TRACK_R * Math.cos(PORTAL_A_TH), -9, TRACK_R * Math.sin(PORTAL_A_TH), 1.5,  0.55, 9],
+  [TRACK_R * Math.cos(PORTAL_B_TH), -5, TRACK_R * Math.sin(PORTAL_B_TH), 1.65, 0.22, 8],
 ];
 
 // Ribbon paint dimensions (radial offsets from the arc centerline).
