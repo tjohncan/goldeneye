@@ -1214,6 +1214,30 @@ export const addToScene = (scene, { room: kitchenRoom, door }) => {
     sdf:      shackRoofSdf,
     boundingBox: [ROOF_HALF_X + 0.1, ROOF_RISE / 2 + 1.3, ROOF_HALF_Z + 0.1],
   });
+  // Roof physics pad — two invisible blocks (tracer drops them, physics
+  // keeps them):
+  //  - EAVE FILL: the roof overhangs the wall, so the under-eave soffit
+  //    is a CONCAVE pocket (roof underside meeting wall). Per-item
+  //    push-out resolves one surface at a time, so a fish swimming up
+  //    into it gets bounced roof→wall→roof and never converges in the 4
+  //    iterations — a trap. Filling the pocket solid leaves a convex
+  //    face to slide off.
+  //  - RIDGE CAP: a thin block along the ridge. At the peak / gable tip
+  //    the bare prism has three faces meeting — a near-degenerate
+  //    gradient the push-out can't resolve — so a fast dive tunnels in
+  //    and lingers (the solid-colour view). The cap hands that spot a
+  //    clean box gradient to eject from; kept inside the sloped faces
+  //    so it never force-fields.
+  add({
+    name:      'shack-roof-pad',
+    color:     [0, 0, 0],
+    position:  [0, ROOF_MID_Y, 0],
+    sdf:       unionSDF(
+      translateSDF([0, -ROOF_RISE / 2 - 3, 0], boxSDF([ROOF_HALF_X, 3, ROOF_HALF_Z])),
+      translateSDF([0, -1, 0], boxSDF([ROOF_HALF_X, 6, 1.2])),
+    ),
+    invisible: true,
+  });
 
   // ── the living cove ──
   // Mountain range + mesa first (returns the mesa's surface geometry;

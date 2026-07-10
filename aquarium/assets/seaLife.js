@@ -21,9 +21,9 @@
 // split and eye patches stay glued to the body at any attitude.
 
 import {
-  boxSDF, sphereSDF, capsuleBetweenSDF,
-  unionSDF, smoothUnionSDF,
-  translateSDF, rotateXSDF,
+  boxSDF, sphereSDF, capsuleBetweenSDF, roundedConeSDF, triPrismSDF,
+  unionSDF, smoothUnionSDF, cutSDF,
+  translateSDF, rotateXSDF, rotateYSDF, rotateZSDF,
 } from '../../core/scene.js';
 import { frameTimeSec } from '../../core/tracer.js';
 
@@ -54,15 +54,38 @@ const creatureFrame = (P, sdf) => (px, py, pz) => {
 
 const ORCA = makePose(0);
 
+// Flukes — one CONTINUOUS fan: two wide-chord lobes whose bases overlap
+// solid across the centre (no gap), swept aft, with only a SHALLOW notch
+// bitten from the trailing centre. Reads as a real orca fan, not two
+// separate blades. Each lobe is a triPrism laid flat (rotateZ) and swept
+// aft (rotateY); a small 45°-rotated box carves the notch. The lobes'
+// front centre is filled by the tail-stock cone when unioned.
+const orcaFlukeLobe = (side) => translateSDF([0, 2.0, -17.0],
+  rotateYSDF(side * 0.40,
+    rotateZSDF(-side * Math.PI / 2, triPrismSDF(0.45, 2.9, 7.8))));
+const orcaFlukes = cutSDF(
+  translateSDF([0, 2.0, -20.5], rotateYSDF(Math.PI / 4, boxSDF([1.3, 1.2, 1.3]))),
+  unionSDF(orcaFlukeLobe(1), orcaFlukeLobe(-1)),
+);
+
+// Pectoral paddles — broad tapering blades laid flat (rotateZ) and
+// swept aft (rotateY). A wide chord keeps them oar-like paddles rather
+// than spikes; one per side, replacing the old flat spanning slab.
+const orcaPectoral = (side) => translateSDF([side * 0.8, -3.4, 6.2],
+  rotateYSDF(side * 0.45,
+    rotateZSDF(-side * Math.PI / 2, triPrismSDF(0.32, 2.0, 5.2))));
+
 const orcaShape = unionSDF(
   smoothUnionSDF(1.0,
     capsuleBetweenSDF([0, 0, -10], [0, 0, 10], 5.2),
     translateSDF([0, 0.3, 11.5], sphereSDF(5.4)),
-    capsuleBetweenSDF([0, 0.4, -10], [0, 1.8, -17.5], 2.0),
+    // Tail stock as a tapered cone (was a constant-radius tube): eases
+    // the body down to the peduncle so the pre-tail narrowing is smooth.
+    roundedConeSDF([0, 1.8, -17.5], [0, 0.4, -10], 1.3, 4.5),
   ),
-  translateSDF([0, 2.0, -19.5], boxSDF([6.5, 0.5, 2.2])),            // horizontal flukes
-  translateSDF([0, 8.0, 1.0], rotateXSDF(-0.25, boxSDF([0.28, 3.2, 1.4]))), // tall dorsal
-  translateSDF([0, -3.4, 6.5], boxSDF([5.0, 0.35, 1.8])),            // pectoral paddles
+  orcaFlukes,                                                      // forked, notched flukes
+  translateSDF([0, 4.9, 1.0], rotateXSDF(-0.2, triPrismSDF(0.26, 1.5, 6.6))), // tall dorsal, tapered to a point
+  orcaPectoral(1), orcaPectoral(-1),                               // broad swept pectoral paddles
 );
 
 const orcaColorFn = (lpx, lpy, lpz) => {
@@ -77,8 +100,18 @@ const orcaColorFn = (lpx, lpy, lpz) => {
   if (ax > 2.5 && pdy * pdy / (1.1 * 1.1) + pdz * pdz / (2.4 * 2.4) < 1) {
     return [230, 232, 235];
   }
-  // Gray saddle behind the dorsal fin.
-  if (by > 2.0 && bz > -6 && bz < -1 && ax > 1.2) return [150, 155, 165];
+  // Fluke fan — dark on top, pale underside, split at the thin blade's
+  // mid-plane (y ≈ 2). Only the fan lives this far aft (bz < -17.5), so
+  // colour by which face a ray struck, not by body height.
+  if (bz < -17.5) return by > 2.0 ? [28, 30, 36] : [235, 238, 240];
+  // Gray saddle behind the dorsal — an oval blaze rather than a hard
+  // box, so it reads as a natural marking from above.
+  const sz = bz + 3.5;
+  if (by > 2.0 && sz * sz / (2.8 * 2.8) + ax * ax / (3.6 * 3.6) < 1) return [150, 155, 165];
+  // Pectoral paddles ride LOW (belly height) but are fins, not belly —
+  // colour by fin, not by height, so their tops don't read white from
+  // above. They alone reach past ax 4.4 down here.
+  if (by < -2.6 && ax > 4.4 && bz > 3 && bz < 9) return [28, 30, 36];
   // White belly + chin.
   if (by < -2.6) return [235, 238, 240];
   if (by < -1.0 && bz > 8) return [235, 238, 240];
@@ -89,17 +122,26 @@ const orcaColorFn = (lpx, lpy, lpz) => {
 
 const SHARK = makePose(0);
 
+// Pectoral — a thin triangle laid flat (rotateZ) so it tapers to the
+// tip, swept aft by rotateY. One per side, replacing the old flat
+// spanning slab.
+const sharkPectoral = (side) => translateSDF([side * 0.5, -1.0, 1.8],
+  rotateYSDF(side * 0.55,
+    rotateZSDF(-side * Math.PI / 2, triPrismSDF(0.12, 0.62, 2.4))));
+
 const sharkShape = unionSDF(
-  smoothUnionSDF(0.5,
-    // Two body segments taper the rear toward the peduncle instead of
-    // running a constant-radius tube nose to tail.
-    capsuleBetweenSDF([0, 0, -1.2], [0, 0, 4.2], 1.55),
-    capsuleBetweenSDF([0, 0.15, -5.4], [0, 0, -1.2], 0.9),
+  smoothUnionSDF(0.6,
+    // Wide mid-body, then ONE tapered cone easing back to the slim
+    // peduncle — a single conic segment (roundedConeSDF) reads as a
+    // smooth continuous taper and is cheaper than stacking capsules.
+    capsuleBetweenSDF([0, 0, -0.8], [0, 0, 4.2], 1.55),
+    roundedConeSDF([0, 0.35, -6.6], [0, 0, -0.8], 0.6, 1.55),   // reaches UNDER the caudal so the fin roots flush, no gap
     translateSDF([0, -0.1, 5.5], sphereSDF(1.15)),
   ),
-  translateSDF([0, 2.6, 0.2], rotateXSDF(-0.5, boxSDF([0.16, 1.5, 1.0]))),  // raked dorsal
-  translateSDF([0, 0.9, -6.2], rotateXSDF(-0.55, boxSDF([0.14, 2.2, 1.1]))), // tail (vertical)
-  translateSDF([0, -1.0, 1.8], boxSDF([2.6, 0.14, 0.9])),                    // pectorals
+  translateSDF([0, 1.4, 0.2], rotateXSDF(-0.5, triPrismSDF(0.15, 1.05, 2.8))),    // raked dorsal, tapered to a point
+  translateSDF([0, 0.4, -6.0], rotateXSDF(-0.6, triPrismSDF(0.13, 0.95, 2.9))),   // caudal — long upper lobe, rooted into the peduncle
+  translateSDF([0, 0.35, -6.0], rotateXSDF(Math.PI + 0.5, triPrismSDF(0.13, 0.6, 1.5))), // caudal — short lower lobe
+  sharkPectoral(1), sharkPectoral(-1),                                            // swept, tapered pectorals
 );
 
 const sharkColorFn = (lpx, lpy, lpz) => {
@@ -107,12 +149,17 @@ const sharkColorFn = (lpx, lpy, lpz) => {
   const z1 = lpx * SHARK.sy + lpz * SHARK.cy;
   const by = lpy * SHARK.cp - z1 * SHARK.sp;
   const bz = lpy * SHARK.sp + z1 * SHARK.cp;
+  const ax = Math.abs(x1);
   // Eye dots either side of the snout.
-  const edx = Math.abs(x1) - 1.15, edy = by - 0.35, edz = bz - 4.6;
+  const edx = ax - 1.15, edy = by - 0.35, edz = bz - 4.6;
   if (edx * edx + edy * edy + edz * edz < 0.12) return [15, 15, 18];
   // Fins share the back's gray — a distinct tip tone blended oddly
   // with bright water/sky at this resolution (fins are ~1px wide, so
   // any third tone reads as mismatch, not detail).
+  // Pectorals + the caudal's lower lobe ride low but are fins, not
+  // belly — paint them the back-gray so their tops don't read white.
+  if (bz < -5.5) return [104, 116, 130];                             // tail / caudal region
+  if (by < -0.4 && ax > 1.5 && bz > -0.5 && bz < 4) return [104, 116, 130]; // pectorals
   if (by > 0.4) return [104, 116, 130];                              // back + fins
   if (by < -0.4) return [225, 228, 230];                             // white belly
   return [160, 168, 178];                                            // flank band
@@ -284,9 +331,9 @@ export const addToScene = (add, { floorY }) => {
     colorFn:  orcaColorFn,
     position: [ORCA.x, ORCA.y, ORCA.z],
     sdf:      creatureFrame(ORCA, orcaShape),
-    // Worst-case yaw+pitch: body reach 21.7, vertical extent 11.5
-    // (raked dorsal top) → 21.7·sin(0.25) + 11.5·cos(0.25) ≈ 16.5 on
-    // Y; 22.5 on X/Z.
+    // Body reach (≈21.7) drives the horizontal bound again — the fan
+    // flukes tuck inside it (tip radial ≈ 21.3). Y set by the dorsal +
+    // pitch (≈16.5).
     boundingBox: [22.5, 17, 22.5],
   });
 
@@ -298,9 +345,10 @@ export const addToScene = (add, { floorY }) => {
     colorFn:  sharkColorFn,
     position: [SHARK.x, SHARK.y, SHARK.z],
     sdf:      creatureFrame(SHARK, sharkShape),
-    // The raked tail box's rotation grows its Z-reach to 6.2 +
-    // 2.2·sin(0.55) + 1.1·cos(0.55) ≈ 8.3 — that, not the snout,
-    // sets the horizontal bound.
+    // Caudal upper lobe (rooted lower/forward now): apex ≈ (Y 2.8, Z-7.6)
+    // in level flight (6.0 + 2.9·sin0.6). Its radial √(2.8² + 7.6²) ≈ 8.1
+    // tips toward horizontal under the ±0.20 pitch (Z reaches ≈ 8.0) —
+    // that, not the snout (6.7), sets the bound; 8.5 keeps a little margin.
     boundingBox: [8.5, 6.1, 8.5],
   });
 

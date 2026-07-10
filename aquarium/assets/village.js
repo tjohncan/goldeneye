@@ -447,6 +447,22 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
       sdf:      makeCottageSdf(b),
       boundingBox: [fx, H / 2, fz],
     });
+    // Roof physics pad — same two blocks as the shack (see outside.js):
+    // an eave fill for the concave under-eave soffit trap, and a thin
+    // ridge cap so the peak/gable tip can't be tunnelled into. Built in
+    // the cottage's rotated frame.
+    const eaveY = b.bodyHalfH - b.roofH / 2;
+    add({
+      name:      b.name + '-pad',
+      color:     [0, 0, 0],
+      position:  [b.x, plateauY + H / 2, b.z],
+      sdf:       rotateYSDF(b.yaw, unionSDF(
+        translateSDF([0, eaveY - 3, 0], boxSDF([b.hx + ROOF_OVERHANG, 3, b.hz + ROOF_OVERHANG])),
+        translateSDF([0, eaveY + b.roofH * 0.42, 0],
+          boxSDF([b.hx + ROOF_OVERHANG, b.roofH * 0.42, (b.hz + ROOF_OVERHANG) * 0.13])),
+      )),
+      invisible: true,
+    });
     // Roof-ridge perches. The ridge runs along the building's pre-
     // rotation X axis; off-center perches rotate with the yaw.
     const ridgeY = plateauY + H + 0.4;
@@ -497,9 +513,9 @@ export const addToScene = (add, { plateauY, seaLevelY, mesa }) => {
   // Big ones line the lane between buildings; the beach pair stays
   // modest; one statement tree on the mesa top.
   const trees = [
-    { x: 100, z: -270, sc: 3.4, seed: 1.3, baseY: plateauY, perch: true  },
+    { x: 112, z: -252, sc: 3.4, seed: 1.3, baseY: plateauY, perch: true  },
     { x: 0,   z: -290, sc: 3.0, seed: 3.7, baseY: plateauY, perch: false },
-    { x: -40, z: -460, sc: 3.2, seed: 5.1, baseY: plateauY, perch: true  },
+    { x: -48, z: -468, sc: 3.2, seed: 5.1, baseY: plateauY, perch: true  },
     { x: -160, z: -430, sc: 3.6, seed: 7.9, baseY: plateauY, perch: false },
     { x: +46, z: +46,  sc: 2.3, seed: 2.4, baseY: plateauY - 0.3, perch: true },
     { x: -40, z: +38,  sc: 2.0, seed: 6.2, baseY: plateauY - 0.1, perch: false },
