@@ -35,7 +35,7 @@ const SCREEN_W    = RES;
 const SCREEN_H    = RES;
 const LENS_POINTS = Math.round(6400 * (RES / 64) * (RES / 64));
 const FPS_BUDGET  = Math.floor(25600 * 16 / LENS_POINTS);
-const MAX_FPS     = Math.min(24, FPS_BUDGET, Math.max(4, Number(params.get('fps')) || 13));
+const MAX_FPS     = Math.min(24, FPS_BUDGET, Math.max(4, Number(params.get('fps')) || 11));
 
 const lens = disk({ points: LENS_POINTS });
 const camera = new Camera({ lens, screenW: SCREEN_W, screenH: SCREEN_H });
