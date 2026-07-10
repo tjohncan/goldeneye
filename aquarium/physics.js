@@ -94,82 +94,94 @@ export const bindPhysics = ({ camera, scene, fishRadius = FISH_RADIUS }) => {
   // Reusable scratch — region keys touched by the fish this iteration.
   // At most 7 entries (one per probe), but typically 1-2 in steady state.
   const touchedRegions = [];
+  // Last position that resolved cleanly (nothing closer than fishRadius).
+  // Seeded to the spawn; used to undo a frame that tunnels into a solid.
+  const lastSafe = [camera.position[0], camera.position[1], camera.position[2]];
+  /** @type {Item | null} owning item of the nearest surface, set by probe(). */
+  let minItem = null;
+
+  // Region-culled nearest-surface distance at a world point. Records the
+  // owning item in `minItem` so the caller can push out of it.
+  const probe = (px, py, pz) => {
+    let nRegions = 0;
+    if (scene.regionFn) {
+      for (let p = 0; p < 7; p++) {
+        const off = PROBE_OFFSETS[p];
+        const k = scene.regionFn(
+          px + off[0] * fishRadius,
+          py + off[1] * fishRadius,
+          pz + off[2] * fishRadius,
+        );
+        let dup = false;
+        for (let j = 0; j < nRegions; j++) {
+          if (touchedRegions[j] === k) { dup = true; break; }
+        }
+        if (!dup) touchedRegions[nRegions++] = k;
+      }
+    }
+    let minD = Infinity;
+    minItem = null;
+    for (let i = 0; i < scene.length; i++) {
+      const item = scene[i];
+      if (item.collides === false) continue;   // fish swims through
+      if (nRegions > 0 && item.regionKey !== null) {
+        const rk = item.regionKey;
+        const set = item._regionKeySet;
+        let inRegion = false;
+        if (set !== null) {
+          for (let j = 0; j < nRegions; j++) {
+            if (set.has(touchedRegions[j])) { inRegion = true; break; }
+          }
+        } else {
+          for (let j = 0; j < nRegions; j++) {
+            if (touchedRegions[j] === rk) { inRegion = true; break; }
+          }
+        }
+        if (!inRegion) continue;
+      }
+      const ip = item.position;
+      const d = item.sdf(px - ip[0], py - ip[1], pz - ip[2]);
+      if (d < minD) { minD = d; minItem = item; }
+    }
+    return minD;
+  };
 
   return {
     update() {
       for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-        const [px, py, pz] = camera.position;
-
-        // Sample regions at the camera + 6 axis probes. Re-sampled each
-        // iteration because overlap push-outs move the camera between iters.
-        // Items with a regionKey not in this set are skipped below.
-        let nRegions = 0;
-        if (scene.regionFn) {
-          for (let p = 0; p < 7; p++) {
-            const off = PROBE_OFFSETS[p];
-            const k = scene.regionFn(
-              px + off[0] * fishRadius,
-              py + off[1] * fishRadius,
-              pz + off[2] * fishRadius,
-            );
-            let dup = false;
-            for (let j = 0; j < nRegions; j++) {
-              if (touchedRegions[j] === k) { dup = true; break; }
-            }
-            if (!dup) touchedRegions[nRegions++] = k;
-          }
+        const px = camera.position[0], py = camera.position[1], pz = camera.position[2];
+        // Re-probed each iteration because push-outs move the camera between iters.
+        const minD = probe(px, py, pz);
+        if (minD >= fishRadius) {          // resolved — nothing within fishRadius
+          lastSafe[0] = px; lastSafe[1] = py; lastSafe[2] = pz;
+          return;
         }
-
-        // Find the closest item surface to the fish.
-        let minD = Infinity;
-        /** @type {Item | null} */
-        let minItem = null;
-        for (let i = 0; i < scene.length; i++) {
-          const item = scene[i];
-          if (item.collides === false) continue;   // fish swims through
-          if (nRegions > 0 && item.regionKey !== null) {
-            const rk = item.regionKey;
-            const set = item._regionKeySet;
-            let inRegion = false;
-            if (set !== null) {
-              for (let j = 0; j < nRegions; j++) {
-                if (set.has(touchedRegions[j])) { inRegion = true; break; }
-              }
-            } else {
-              for (let j = 0; j < nRegions; j++) {
-                if (touchedRegions[j] === rk) { inRegion = true; break; }
-              }
-            }
-            if (!inRegion) continue;
-          }
-          const ip = item.position;
-          const d = item.sdf(px - ip[0], py - ip[1], pz - ip[2]);
-          if (d < minD) {
-            minD = d;
-            minItem = item;
-          }
-        }
-
-        if (minD >= fishRadius) return;  // resolved (no overlap with any item)
 
         // SDF gradient at the fish position via forward finite differences.
         const ip = minItem.position;
-        const lpx = px - ip[0], lpy = py - ip[1], lpz = pz - ip[2];
-        const [gx, gy, gz] = sdfGrad(minItem.sdf, lpx, lpy, lpz, minD, NORMAL_EPS);
+        const [gx, gy, gz] = sdfGrad(minItem.sdf, px - ip[0], py - ip[1], pz - ip[2], minD, NORMAL_EPS);
         const glen = Math.sqrt(gx * gx + gy * gy + gz * gz);
-        if (glen < 1e-9) return;  // degenerate gradient; bail rather than NaN
+        if (glen < 1e-9) break;            // degenerate gradient — let the revert below catch it
 
-        // Push along normalized gradient by the overlap distance. The gradient
-        // direction works for both regular SDFs (push outward away from prop)
-        // and inverted-shell SDFs like the room walls (push inward away from
-        // the wall surface back into the room interior).
-        const overlap = fishRadius - minD;
-        const scale = overlap / glen;
-        camera.position = [
-          px + gx * scale,
-          py + gy * scale,
-          pz + gz * scale,
-        ];
+        // Push along normalized gradient by the overlap distance. Works for
+        // regular SDFs (push outward off a prop) and inverted-shell SDFs like
+        // the room walls (push back into the room interior).
+        const scale = (fishRadius - minD) / glen;
+        camera.position = [px + gx * scale, py + gy * scale, pz + gz * scale];
+      }
+
+      // Out of iterations (or a degenerate gradient) still overlapping. If the
+      // fish has actually tunnelled INSIDE a solid — a fast dive punching
+      // through thin geometry (a roof tip, an eave soffit) faster than the
+      // push-out could eject — snap back to the last cleanly-resolved spot so
+      // the solid's interior never renders (physics runs before paint). Merely
+      // grazing a surface (positive distance) is fine; leave it be.
+      if (probe(camera.position[0], camera.position[1], camera.position[2]) < 0) {
+        camera.position = [lastSafe[0], lastSafe[1], lastSafe[2]];
+      } else {
+        lastSafe[0] = camera.position[0];
+        lastSafe[1] = camera.position[1];
+        lastSafe[2] = camera.position[2];
       }
     },
   };

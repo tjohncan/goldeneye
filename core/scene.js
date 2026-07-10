@@ -217,6 +217,46 @@ export const capsuleBetweenSDF = ([ax, ay, az], [bx, by, bz], radius) => {
 };
 
 /**
+ * Rounded cone between endpoints `a` (radius r1) and `b` (radius r2): a
+ * capsule whose radius tapers linearly along its length. Exact Euclidean
+ * SDF (Lipschitz 1), so it is marcher- and physics-safe like the capsule.
+ * Good for bodies/limbs that narrow along their length (a fish tapering
+ * to its peduncle, a trunk). Degenerate a≈b falls back to a sphere.
+ * (Point-to-point round-cone form after Inigo Quilez.)
+ */
+/** @type {(a: Vec3, b: Vec3, r1: number, r2: number) => SDF} */
+export const roundedConeSDF = ([ax, ay, az], [bx, by, bz], r1, r2) => {
+  const bax = bx - ax, bay = by - ay, baz = bz - az;
+  const l2 = bax * bax + bay * bay + baz * baz;
+  if (l2 < 1e-12) {
+    const r = Math.max(r1, r2);
+    return (px, py, pz) => {
+      const ex = px - ax, ey = py - ay, ez = pz - az;
+      return Math.sqrt(ex * ex + ey * ey + ez * ez) - r;
+    };
+  }
+  const rr  = r1 - r2;
+  const a2  = l2 - rr * rr;
+  const il2 = 1 / l2;
+  const sgnRR = Math.sign(rr);
+  return (px, py, pz) => {
+    const pax = px - ax, pay = py - ay, paz = pz - az;
+    const y  = pax * bax + pay * bay + paz * baz;   // axial coord × l2
+    const z  = y - l2;
+    const xx = pax * l2 - bax * y;                  // perpendicular × l2
+    const xy = pay * l2 - bay * y;
+    const xz = paz * l2 - baz * y;
+    const x2 = xx * xx + xy * xy + xz * xz;
+    const y2 = y * y * l2;
+    const z2 = z * z * l2;
+    const k  = sgnRR * rr * rr * x2;
+    if (Math.sign(z) * a2 * z2 > k) return Math.sqrt(x2 + z2) * il2 - r2;
+    if (Math.sign(y) * a2 * y2 < k) return Math.sqrt(x2 + y2) * il2 - r1;
+    return (Math.sqrt(x2 * a2 * il2) + y * rr) * il2 - r1;
+  };
+};
+
+/**
  * Cylinder centered at the local origin along the Y axis, total height
  * 2*halfHeight, with the given radius.
  *
